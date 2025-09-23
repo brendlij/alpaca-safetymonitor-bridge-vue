@@ -19,9 +19,12 @@
   },
   "dependencies": {
     "@mdi/js": "^7.4.47",
+    "@types/js-yaml": "^4.0.9",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "js-yaml": "^4.1.0",
+    "mqtt": "^5.14.1",
     "vue": "^3.5.18",
     "vue-router": "^4.4.5"
   },

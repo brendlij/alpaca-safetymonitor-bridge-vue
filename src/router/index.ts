@@ -17,6 +17,11 @@ const routes: RouteRecordRaw[] = [
     name: 'ServerManager',
     component: () => import('@/views/ServerManagerView.vue'),
   },
+  {
+    path: '/settings',
+    name: 'Settings',
+    component: () => import('@/views/SettingsView.vue'),
+  },
 ]
 
 export const router = createRouter({

@@ -6,9 +6,13 @@ const { logger } = require('./logger.cjs')
 const { createAlpacaRouter } = require('./alpaca.cjs')
 const { createState } = require('./state.cjs')
 const { startDiscovery } = require('./discovery.cjs')
+const { loadConfig, saveConfig, getConfig } = require('./config.cjs')
+const { MqttManager } = require('./mqtt.cjs')
 
-const HTTP_PORT = Number(process.env.PORT || 11111)
-const DISCOVERY_PORT = Number(process.env.DISCOVERY_PORT || 32227)
+// Load configuration
+const config = loadConfig()
+const HTTP_PORT = Number(process.env.PORT || config.server.httpPort)
+const DISCOVERY_PORT = Number(process.env.DISCOVERY_PORT || config.server.discoveryPort)
 
 function main() {
   const app = express()
@@ -24,6 +28,68 @@ function main() {
     if (logBuffer.length > MAX_LOGS) logBuffer.shift()
     bus.emit('log', entry)
   }
+
+  // Initialize MQTT manager
+  const mqttManager = new MqttManager(logger)
+
+  // MQTT event handlers
+  mqttManager.on('connected', () => {
+    emitLog('info', 'MQTT connected')
+  })
+
+  mqttManager.on('disconnected', () => {
+    emitLog('warn', 'MQTT disconnected')
+  })
+
+  mqttManager.on('error', (error) => {
+    emitLog('error', `MQTT error: ${error.message}`)
+  })
+
+  mqttManager.on('message', (topic, message) => {
+    emitLog('info', `MQTT message received: ${topic} = ${message}`)
+
+    // Handle safety commands
+    if (topic.endsWith('/command/safe')) {
+      // First try simple boolean strings
+      if (message === 'true' || message === 'false') {
+        emitLog('info', `Processing simple MQTT safety command: ${message}`)
+        state.setSafe(message === 'true', 'MQTT command')
+        return
+      }
+
+      // Then try JSON parsing
+      try {
+        const data = JSON.parse(message)
+
+        // Check if it's a simple boolean value
+        if (typeof data === 'boolean') {
+          emitLog('info', `Processing JSON boolean MQTT safety command: ${data}`)
+          state.setSafe(data, 'MQTT command')
+          return
+        }
+
+        // Check if it's an object with safe property
+        if (typeof data === 'object' && typeof data.safe === 'boolean') {
+          emitLog(
+            'info',
+            `Processing MQTT safety command: safe=${data.safe}, reason="${data.reason || 'MQTT command'}"`,
+          )
+          state.setSafe(data.safe, data.reason || 'MQTT command')
+          return
+        }
+
+        emitLog(
+          'warn',
+          `Invalid MQTT command format. Expected boolean, "true"/"false", or {safe: boolean, reason?: string}. Got: ${message}`,
+        )
+      } catch (parseError) {
+        emitLog(
+          'error',
+          `Failed to parse MQTT command: ${parseError.message}. Message: "${message}"`,
+        )
+      }
+    }
+  })
   // monkey-patch shared logger so ALL modules flow into SSE
   const original = { ...logger }
   ;['info', 'debug', 'warn', 'error'].forEach((lvl) => {
@@ -45,9 +111,27 @@ function main() {
   try {
     state.on('clientConnectionChanged', (connected, source, at) => {
       logger.info('Client connection changed', { connected, source, at })
+      // Publish status to MQTT
+      if (mqttManager.isConnected()) {
+        mqttManager.publishStatus({
+          connected: state.getConnected(),
+          isSafe: state.getIsSafe(),
+          clientConnected: connected,
+          uptimeSec: Math.floor(process.uptime()),
+        })
+      }
     })
     state.on('safeChanged', (isSafe, reason, at) => {
       logger.info('Safety state changed', { isSafe, reason, at })
+      // Publish status to MQTT
+      if (mqttManager.isConnected()) {
+        mqttManager.publishStatus({
+          connected: state.getConnected(),
+          isSafe: isSafe,
+          clientConnected: state.getClientConnected ? state.getClientConnected() : false,
+          uptimeSec: Math.floor(process.uptime()),
+        })
+      }
     })
     state.on('healthChanged', (health) => {
       logger.warn('Health changed', { health })
@@ -61,12 +145,11 @@ function main() {
       discoveryPort: DISCOVERY_PORT,
       connected: state.getConnected(),
       isSafe: state.getIsSafe(),
-      clientConnected: state.getClientConnected(),
-      lastClientSeen: state.getLastClientSeen(),
-      // legacy alias to not break older UI
       lastClient: state.getLastClientSeen(),
       uptimeSec: Math.floor(process.uptime()),
       memory: process.memoryUsage(),
+      clientConnected: state.getClientConnected ? state.getClientConnected() : false,
+      mqtt: mqttManager.getStatus(),
     })
   })
 
@@ -110,6 +193,52 @@ function main() {
     res.json({ ok: true, isSafe: state.getIsSafe() })
   })
 
+  // Admin: get configuration
+  app.get('/admin/config', (req, res) => {
+    res.json(getConfig())
+  })
+
+  // Admin: save configuration
+  app.post('/admin/config', (req, res) => {
+    try {
+      const success = saveConfig(req.body)
+      if (success) {
+        logger.info('Configuration updated via admin')
+
+        // Reconnect MQTT with new config
+        const newConfig = getConfig()
+        mqttManager.connect(newConfig.mqtt)
+
+        res.json({ ok: true, message: 'Configuration saved successfully' })
+      } else {
+        res.status(500).json({ ok: false, error: 'Failed to save configuration' })
+      }
+    } catch (error) {
+      logger.error('Configuration save error', { error: error.message })
+      res.status(400).json({ ok: false, error: error.message })
+    }
+  })
+
+  // Admin: MQTT control
+  app.post('/admin/mqtt/connect', (req, res) => {
+    try {
+      const currentConfig = getConfig()
+      mqttManager.connect(currentConfig.mqtt)
+      res.json({ ok: true, message: 'MQTT connection initiated' })
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message })
+    }
+  })
+
+  app.post('/admin/mqtt/disconnect', (req, res) => {
+    try {
+      mqttManager.disconnect()
+      res.json({ ok: true, message: 'MQTT disconnected' })
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message })
+    }
+  })
+
   // Admin: shutdown
   app.post('/admin/shutdown', (req, res) => {
     res.json({ ok: true })
@@ -125,6 +254,13 @@ function main() {
 
   const udp = startDiscovery({ httpPort: HTTP_PORT, discoveryPort: DISCOVERY_PORT })
   logger.info('Discovery started', { discoveryPort: DISCOVERY_PORT })
+
+  // Start MQTT connection if enabled
+  if (config.mqtt.enabled) {
+    setTimeout(() => {
+      mqttManager.connect(config.mqtt)
+    }, 1000) // Small delay to ensure server is fully started
+  }
 
   const shutdown = () => {
     logger.info('Shutting down...')

@@ -53,6 +53,7 @@ onBeforeUnmount(() => {
       <RouterLink class="menu-item" to="/" @click="closeMenu">Home</RouterLink>
       <RouterLink class="menu-item" to="/about" @click="closeMenu">About</RouterLink>
       <RouterLink class="menu-item" to="/server" @click="closeMenu">Server Manager</RouterLink>
+      <RouterLink class="menu-item" to="/settings" @click="closeMenu">Settings</RouterLink>
     </nav>
   </header>
 </template>
