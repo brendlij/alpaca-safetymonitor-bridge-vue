@@ -1,0 +1,19 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'SUSE Mono', monospace;
+  /* andere Basis-Stile 👉 z. B. Hintergrund & Standardfarbe */
+  background-color: #1e1e1f;
+  color: #cbd5e1;
+}
+
+.text-center {
+  text-align: center;
+}
+.mt-2 {
+  margin-top: 0.5rem;
+}
