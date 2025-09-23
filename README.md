@@ -19,20 +19,12 @@ npm run dev:all
 
 ### Production Mode
 
-#### Option 1: Direct Node.js
-
 ```bash
 npm run build
 npm run start
 # or use platform-specific scripts:
 # Windows: start-production.bat
 # Linux/Mac: ./start-production.sh
-```
-
-#### Option 2: Docker (Recommended)
-
-```bash
-docker-compose up -d
 ```
 
 - **Web Interface:** http://localhost:3000
@@ -46,7 +38,6 @@ docker-compose up -d
 - **MQTT Integration** - Publish status and receive remote commands
 - **Real-time Logs** - Live server and wrapper logs with filtering
 - **Smart Configuration** - YAML-based config with web UI management
-- **Docker Ready** - Production deployment with proper ASCOM networking
 
 ## 📋 Configuration
 
@@ -115,50 +106,7 @@ docker-compose up -d
 
 ### Complete docker-compose.yml
 
-```yaml
-version: '3.8'
-
-services:
-  alpaca-safety-monitor:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: alpaca-safety-monitor-bridge
-    restart: unless-stopped
-
-    # Environment variables
-    environment:
-      - WEB_PORT=3000 # Web interface port
-      - NODE_ENV=production
-
-    # Use host networking for ASCOM Alpaca discovery to work properly
-    network_mode: host
-
-    # Volume for persistent configuration
-    volumes:
-      - alpaca_data:/app/data # Main data directory (config.yaml location)
-      - alpaca_server_data:/app/server/data # Server specific data
-
-    # Health check
-    healthcheck:
-      test:
-        [
-          'CMD',
-          'node',
-          '-e',
-          "const http = require('http'); http.get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-volumes:
-  alpaca_data:
-    driver: local
-  alpaca_server_data:
-    driver: local
-```
+````
 
 ### Custom Web Port
 
@@ -167,7 +115,7 @@ Edit the `WEB_PORT` environment variable:
 ```yaml
 environment:
   - WEB_PORT=8080 # Custom web interface port
-```
+````
 
 ### Manual Docker
 
@@ -219,26 +167,16 @@ docker run --network host ghcr.io/brendlij/alpaca-safetymonitor-bridge-vue:lates
 ├── public/              # Static assets
 ├── dist/                # Built frontend (production)
 ├── wrapper-server.cjs   # Production server wrapper
-├── docker-compose.yml   # Docker deployment
-├── start-production.*   # Platform-specific start scripts
-├── .github/workflows/   # GitHub Actions CI/CD
-└── DOCKER.md           # Detailed Docker documentation
+└── start-production.*   # Platform-specific start scripts
 ```
 
-## 🔄 CI/CD
-
-GitHub Actions automatically:
-
-- **Build & Test** - Runs on every push/PR to validate code
-- **Docker Images** - Builds and pushes multi-platform images to GitHub Container Registry
-- **Tags** - Creates versioned releases for tags (e.g., `v1.0.0`)
-
-### Available Scripts
+## 🔧 Available Scripts
 
 ```bash
-npm run lint:check     # Check code style (CI)
-npm run lint           # Fix code style issues
+npm run dev            # Start Vite dev server
+npm run dev:all        # Start both wrapper server and Vite dev server
 npm run build          # Build frontend for production
-npm run docker:build   # Build Docker image locally
-npm run docker:run     # Run Docker image locally
+npm run start          # Start production server
+npm run lint           # Fix code style issues
+npm run lint:check     # Check code style
 ```
