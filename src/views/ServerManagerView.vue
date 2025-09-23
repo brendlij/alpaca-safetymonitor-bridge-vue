@@ -129,24 +129,35 @@
 
     <h2 style="margin-bottom: 28px">Logs</h2>
     <div class="log-tabs log-tabs-enhanced">
-      <div class="tab-switcher">
+      <div class="tab-switcher" role="tablist" aria-label="Log tabs">
+        <!-- sliding pill -->
+        <span
+          class="tab-indicator"
+          :style="{ transform: `translateX(${activeIdx * 100}%)` }"
+        ></span>
+
         <button
           class="tab-button btn-log"
           :class="{ active: activeLogTab === 'simple' }"
+          role="tab"
+          :aria-selected="activeLogTab === 'simple'"
           @click="activeLogTab = 'simple'"
         >
           Simple Logs
         </button>
+
         <button
           class="tab-button btn-log"
           :class="{ active: activeLogTab === 'detailed' }"
+          role="tab"
+          :aria-selected="activeLogTab === 'detailed'"
           @click="activeLogTab = 'detailed'"
         >
           Detailed Logs
         </button>
       </div>
       <div class="log-controls">
-        <button @click="toggleExpandLogs" class="btn-log" :aria-pressed="logsExpanded">
+        <button @click="toggleExpandLogs" class="btn-expand" :aria-pressed="logsExpanded">
           {{ logsExpanded ? 'Collapse' : 'Expand' }}
         </button>
       </div>
@@ -326,6 +337,8 @@ function selectAllLogs(tab: 'simple' | 'detailed') {
 // Modal states
 const showRestartModal = ref(false)
 const showShutdownModal = ref(false)
+
+const activeIdx = computed(() => (activeLogTab.value === 'simple' ? 0 : 1))
 
 // MQTT state (now computed from server status)
 const mqttConnected = computed(() => {
@@ -997,12 +1010,66 @@ button:disabled {
   gap: 18px;
 }
 .tab-switcher {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* 2 Tabs */
   gap: 0;
-  background: transparent;
-  border-radius: 8px;
+  background: #0f1011;
+  border: 1px solid #2a2b2d;
+  border-radius: 10px;
+  padding: 2px;
   overflow: hidden;
-  border: none;
+}
+.tab-switcher .tab-indicator {
+  position: absolute;
+  left: 0; /* immer am linken Rand starten */
+  width: 50%; /* genau halbe Breite bei 2 Tabs */
+  height: calc(100% - 4px);
+  margin: 2px; /* sorgt für den 2px Rand überall */
+  background: #6b7280;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  transition: transform 0.25s ease;
+  z-index: 0;
+}
+.tab-switcher .tab-button {
+  position: relative;
+  z-index: 1;
+  background: transparent !important; /* überschreibt .btn-log */
+  box-shadow: none !important;
+  border: none !important;
+  color: #94a3b8;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: 8px; /* für Fokusring */
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+.tab-switcher .tab-button:hover {
+  color: #e5e7eb;
+}
+.tab-switcher .tab-button.active {
+  color: #ffffff;
+}
+/* Bestehende .btn-log-Styles neutralisieren innerhalb des Switchers */
+.tab-switcher .btn-log {
+  background: transparent;
+}
+
+/* Optional: Fokus sichtbarer machen */
+.tab-switcher .tab-button:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Sanftere Motion für Nutzer mit reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .tab-switcher .tab-indicator {
+    transition: none;
+  }
+  .tab-switcher .tab-button {
+    transition: none;
+  }
 }
 .btn-log {
   background: #4a5568;
