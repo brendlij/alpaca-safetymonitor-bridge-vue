@@ -14,15 +14,7 @@ npm run dev:all
 Web Interface: http://localhost:5173  
 ASCOM API: http://localhost:11111
 
-## API Endpoints
-
-### ASCOM Alpaca API
-
-- `GET /api/v1/safetymonitor/0/issafe` - Get safety state
-- `GET /api/v1/safetymonitor/0/connected` - Get connection status
-- `PUT /api/v1/safetymonitor/0/connected` - Connect/disconnect device
-
-### Admin Endpoints
+## Admin Endpoints
 
 - `GET /admin/config` - Get current configuration
 - `POST /admin/config` - Update configuration
