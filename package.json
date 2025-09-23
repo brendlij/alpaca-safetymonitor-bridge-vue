@@ -19,11 +19,11 @@
   },
   "dependencies": {
     "@mdi/js": "^7.4.47",
-    "vue": "^3.5.18",
-    "vue-router": "^4.4.5",
+    "body-parser": "^1.20.2",
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "body-parser": "^1.20.2"
+    "vue": "^3.5.18",
+    "vue-router": "^4.4.5"
   },
   "devDependencies": {
     "@tsconfig/node22": "^22.0.2",
