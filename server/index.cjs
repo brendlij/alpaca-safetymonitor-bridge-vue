@@ -53,7 +53,10 @@ function main() {
     if (currentConfig.mqtt.enabled && currentConfig.mqtt.autoConnect) {
       setTimeout(() => {
         if (!mqttManager.isConnected()) {
-          emitLog('info', 'Attempting MQTT auto-reconnect...', { type: 'mqtt', action: 'reconnecting' })
+          emitLog('info', 'Attempting MQTT auto-reconnect...', {
+            type: 'mqtt',
+            action: 'reconnecting',
+          })
           mqttManager.connect(currentConfig.mqtt)
         }
       }, 3000) // Reduced delay for faster reconnection
@@ -61,21 +64,21 @@ function main() {
   })
 
   mqttManager.on('error', (error) => {
-    emitLog('error', `MQTT error: ${error.message}`, { 
-      type: 'mqtt', 
-      action: 'error', 
+    emitLog('error', `MQTT error: ${error.message}`, {
+      type: 'mqtt',
+      action: 'error',
       error: error.message,
-      stack: error.stack 
+      stack: error.stack,
     })
   })
 
   mqttManager.on('message', (topic, message) => {
-    emitLog('info', `MQTT message received: ${topic} = ${message}`, { 
-      type: 'mqtt', 
+    emitLog('info', `MQTT message received: ${topic} = ${message}`, {
+      type: 'mqtt',
       action: 'message_received',
       topic,
       message,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     })
 
     // Handle safety commands
@@ -86,7 +89,7 @@ function main() {
           type: 'safety',
           action: 'command_received',
           command: message,
-          source: 'mqtt'
+          source: 'mqtt',
         })
         state.setSafe(message === 'true', 'MQTT command')
         return
@@ -103,7 +106,7 @@ function main() {
             action: 'command_processed',
             command: data,
             source: 'mqtt',
-            format: 'json_boolean'
+            format: 'json_boolean',
           })
           state.setSafe(data, 'MQTT command')
           return
@@ -121,8 +124,8 @@ function main() {
               reason: data.reason || 'MQTT command',
               source: 'mqtt',
               format: 'json_object',
-              payload: data
-            }
+              payload: data,
+            },
           )
           state.setSafe(data.safe, data.reason || 'MQTT command')
           return
@@ -264,10 +267,10 @@ function main() {
       const success = saveConfig(req.body)
       if (success) {
         const newConfig = getConfig()
-        
+
         // Update logger level from new config
         logger.setLevel(newConfig.logging?.level || 'info')
-        
+
         logger.info('Configuration updated via admin')
 
         // Reconnect MQTT with new config if enabled and auto-connect is on

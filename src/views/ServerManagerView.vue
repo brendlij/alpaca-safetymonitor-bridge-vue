@@ -127,32 +127,41 @@
       </div>
     </div>
 
-    <h2>Logs</h2>
-    
-    <!-- Log View Tabs -->
-    <div class="log-tabs">
-      <button 
-        class="tab-button" 
-        :class="{ active: activeLogTab === 'simple' }"
-        @click="activeLogTab = 'simple'"
-      >
-        Simple Logs
-      </button>
-      <button 
-        class="tab-button" 
-        :class="{ active: activeLogTab === 'detailed' }"
-        @click="activeLogTab = 'detailed'"
-      >
-        Detailed Logs
-      </button>
+    <h2 style="margin-bottom: 28px">Logs</h2>
+    <div class="log-tabs log-tabs-enhanced">
+      <div class="tab-switcher">
+        <button
+          class="tab-button btn-log"
+          :class="{ active: activeLogTab === 'simple' }"
+          @click="activeLogTab = 'simple'"
+        >
+          Simple Logs
+        </button>
+        <button
+          class="tab-button btn-log"
+          :class="{ active: activeLogTab === 'detailed' }"
+          @click="activeLogTab = 'detailed'"
+        >
+          Detailed Logs
+        </button>
+      </div>
       <div class="log-controls">
-        <button @click="clearLogs" class="btn-clear-logs">Clear Logs</button>
-        <span class="log-count">{{ logs.length }} entries</span>
+        <button @click="toggleExpandLogs" class="btn-log" :aria-pressed="logsExpanded">
+          {{ logsExpanded ? 'Collapse' : 'Expand' }}
+        </button>
       </div>
     </div>
 
     <!-- Simple Log View -->
-    <div v-if="activeLogTab === 'simple'" class="log-panel simple-logs" ref="simpleLogPanelRef">
+    <div
+      v-if="activeLogTab === 'simple'"
+      class="log-panel simple-logs"
+      ref="simpleLogPanelRef"
+      :class="{ expanded: logsExpanded }"
+      tabindex="0"
+      @keydown.ctrl.a.prevent="selectAllLogs('simple')"
+      @focus="logPanelFocused = 'simple'"
+    >
       <div
         v-for="entry in logs"
         :key="entry.ts + '-simple'"
@@ -166,7 +175,15 @@
     </div>
 
     <!-- Detailed Log View -->
-    <div v-if="activeLogTab === 'detailed'" class="log-panel detailed-logs" ref="detailedLogPanelRef">
+    <div
+      v-if="activeLogTab === 'detailed'"
+      class="log-panel detailed-logs"
+      ref="detailedLogPanelRef"
+      :class="{ expanded: logsExpanded }"
+      tabindex="0"
+      @keydown.ctrl.a.prevent="selectAllLogs('detailed')"
+      @focus="logPanelFocused = 'detailed'"
+    >
       <div
         v-for="entry in logs"
         :key="entry.ts + '-detailed'"
@@ -176,7 +193,16 @@
         <div class="log-header">
           <span class="ts">{{ formatTs(entry.ts) }}</span>
           <span class="lvl">{{ entry.level.toUpperCase() }}</span>
-          <span class="log-type" v-if="entry.meta?.type">{{ entry.meta.type.toUpperCase() }}</span>
+          <span
+            class="log-type"
+            v-if="
+              typeof entry.meta === 'object' &&
+              entry.meta &&
+              'type' in entry.meta &&
+              typeof entry.meta.type === 'string'
+            "
+            >{{ entry.meta.type.toUpperCase() }}</span
+          >
         </div>
         <div class="log-content">
           <div class="msg">{{ entry.msg }}</div>
@@ -279,6 +305,23 @@ const starting = ref(false)
 const activeLogTab = ref<'simple' | 'detailed'>('simple')
 const simpleLogPanelRef = ref<HTMLElement | null>(null)
 const detailedLogPanelRef = ref<HTMLElement | null>(null)
+const logsExpanded = ref(false)
+const logPanelFocused = ref<'simple' | 'detailed' | null>(null)
+function toggleExpandLogs() {
+  logsExpanded.value = !logsExpanded.value
+  nextTick(scrollLogsToBottom)
+}
+
+function selectAllLogs(tab: 'simple' | 'detailed') {
+  const refEl = tab === 'simple' ? simpleLogPanelRef.value : detailedLogPanelRef.value
+  if (!refEl) return
+  // Select all text in the log panel
+  const range = document.createRange()
+  range.selectNodeContents(refEl)
+  const sel = window.getSelection()
+  sel?.removeAllRanges()
+  sel?.addRange(range)
+}
 
 // Modal states
 const showRestartModal = ref(false)
@@ -623,11 +666,6 @@ function formatUptime(sec: number) {
   return `${h}h ${m}m ${s}s`
 }
 
-// Clear logs function
-function clearLogs() {
-  logs.value = []
-}
-
 // Format simple message for readability
 function formatSimpleMessage(entry: LogEntry): string {
   // For MQTT messages, make them more readable
@@ -637,7 +675,7 @@ function formatSimpleMessage(entry: LogEntry): string {
       return `MQTT: ${match[1]} → ${match[2]}`
     }
   }
-  
+
   // For safety commands, make them cleaner
   if (entry.msg.includes('Processing') && entry.msg.includes('safety command')) {
     const match = entry.msg.match(/Processing.*safety command: (.+)/)
@@ -645,7 +683,7 @@ function formatSimpleMessage(entry: LogEntry): string {
       return `Safety command: ${match[1]}`
     }
   }
-  
+
   // Remove redundant prefixes for cleaner display
   return entry.msg
     .replace(/^MQTT /, '')
@@ -657,26 +695,26 @@ function formatSimpleMessage(entry: LogEntry): string {
 // Check if metadata has detailed information worth showing
 function hasDetailedMeta(meta: unknown): boolean {
   if (!meta || typeof meta !== 'object') return false
-  
+
   // Skip simple string meta
   if (typeof meta === 'string') return false
-  
+
   // Check if it has structured data
   const keys = Object.keys(meta as Record<string, unknown>)
-  return keys.length > 0 && keys.some(key => key !== 'type')
+  return keys.length > 0 && keys.some((key) => key !== 'type')
 }
 
 // Format metadata for detailed view
 function formatMeta(meta: unknown): string {
   if (!meta) return ''
-  
+
   // Clone and remove type field for cleaner display
   const cleanMeta = { ...(meta as Record<string, unknown>) }
   delete cleanMeta.type
-  
+
   // If empty after removing type, don't show anything
   if (Object.keys(cleanMeta).length === 0) return ''
-  
+
   return JSON.stringify(cleanMeta, null, 2)
 }
 
@@ -951,27 +989,76 @@ button:disabled {
   margin-bottom: 12px;
   border-bottom: 1px solid #2a2b2d;
   padding-bottom: 8px;
+  margin-top: 24px;
+}
+
+.log-tabs-enhanced {
+  flex-wrap: wrap;
+  gap: 18px;
+}
+.tab-switcher {
+  display: flex;
+  gap: 0;
+  background: transparent;
+  border-radius: 8px;
+  overflow: hidden;
+  border: none;
+}
+.btn-log {
+  background: #4a5568;
+  border: none;
+  color: #cbd5e1;
+  border-radius: 0;
+  font-weight: 500;
+  padding: 8px 20px;
+  transition:
+    background 0.2s,
+    color 0.2s;
+  box-shadow: none;
+}
+.btn-log.active,
+.tab-button.active {
+  background: #6b7280;
+  color: #fff;
+  border-bottom: none;
+  z-index: 1;
+}
+.btn-log:not(.active):hover {
+  background: #5a6570;
+  color: #fff;
+}
+.log-hint {
+  font-size: 12px;
+  color: #64748b;
+  margin-left: 8px;
 }
 
 .tab-button {
-  background: #1f2023;
-  border: 1px solid #2a2b2d;
-  color: #94a3b8;
+  background: #4a5568;
+  border: none;
+  color: #cbd5e1;
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: 0;
   cursor: pointer;
   transition: all 0.2s;
+  box-shadow: none;
+  outline: none;
+  transition:
+    background 0.3s ease,
+    color 0.3s ease;
 }
 
 .tab-button:hover {
-  background: #262629;
-  border-color: #3a3b3d;
+  background: #5a6570;
+  border: none;
 }
 
 .tab-button.active {
-  background: #1e40af;
-  border-color: #3b82f6;
+  background: #6b7280;
   color: white;
+  border: none;
+  box-shadow: none;
+  outline: none;
 }
 
 .log-controls {
@@ -1010,6 +1097,13 @@ button:disabled {
   border: 1px solid #2a2b2d;
   border-radius: 8px;
   padding: 8px;
+  outline: none;
+  transition: height 0.2s;
+}
+.log-panel.expanded {
+  height: 70vh;
+  min-height: 400px;
+  max-height: 80vh;
 }
 
 /* Simple Log Entry */
