@@ -4,11 +4,11 @@ server:
 mqtt:
   enabled: true
   autoConnect: true
-  host: 192.168.178.185
+  host: localhost
   port: 1883
-  username: mqtt
-  password: mqtt
-  baseTopic: test/alpaca/safetymonitor
+  username: 
+  password: 
+  baseTopic: alpaca/safetymonitor
   clientId: alpaca-safety-monitor
 logging:
   level: info
