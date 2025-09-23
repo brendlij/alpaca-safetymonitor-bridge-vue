@@ -2,10 +2,16 @@ const express = require('express')
 const { spawn } = require('child_process')
 const path = require('path')
 const cors = require('cors')
+const { EventEmitter } = require('events')
+const { wrapperLogger, setLogEmitter } = require('./wrapper-logger.cjs')
 
 const app = express()
 app.use(cors())
 app.use(express.json())
+
+const bus = new EventEmitter()
+const logBuffer = []
+const MAX_LOGS = 500
 
 let serverProcess = null
 let isStarting = false
@@ -14,8 +20,17 @@ let isShuttingDown = false
 const WRAPPER_PORT = 3001
 const SERVER_SCRIPT = path.join(__dirname, 'server', 'index.cjs')
 
+// Set up log emitter for wrapper logger
+const emitLog = (entry) => {
+  logBuffer.push(entry)
+  if (logBuffer.length > MAX_LOGS) logBuffer.shift()
+  bus.emit('log', entry)
+}
+
+setLogEmitter(emitLog)
+
 function logWithTimestamp(message) {
-  console.log(`[${new Date().toISOString()}] [WRAPPER] ${message}`)
+  wrapperLogger.info(message)
 }
 
 function startServerProcess() {
@@ -58,14 +73,18 @@ function startServerProcess() {
     })
 
     serverProcess.on('close', (code) => {
-      logWithTimestamp(`Server process exited with code ${code}`)
+      if (code === 0) {
+        wrapperLogger.info(`Server process exited cleanly (code ${code})`)
+      } else {
+        wrapperLogger.warn(`Server process exited with code ${code}`)
+      }
       serverProcess = null
       isStarting = false
       isShuttingDown = false
     })
 
     serverProcess.on('error', (err) => {
-      logWithTimestamp(`Failed to start server process: ${err.message}`)
+      wrapperLogger.error(`Failed to start server process: ${err.message}`)
       serverProcess = null
       isStarting = false
       reject(err)
@@ -117,6 +136,30 @@ function stopServerProcess() {
   })
 }
 
+// Wrapper log endpoints
+app.get('/wrapper/logs', (req, res) => {
+  const n = Math.max(0, Math.min(1000, Number(req.query.n || 200)))
+  res.json(logBuffer.slice(-n))
+})
+
+app.get('/wrapper/logs/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': '*',
+  })
+  res.write(`event: hello\n`)
+  res.write(`data: ${JSON.stringify({ ts: Date.now() })}\n\n`)
+
+  const onLog = (entry) => {
+    res.write(`event: log\n`)
+    res.write(`data: ${JSON.stringify(entry)}\n\n`)
+  }
+  bus.on('log', onLog)
+  req.on('close', () => bus.off('log', onLog))
+})
+
 // Wrapper API endpoints
 app.get('/wrapper/status', (req, res) => {
   res.json({
@@ -161,16 +204,33 @@ app.post('/wrapper/stop', async (req, res) => {
 
 app.post('/wrapper/restart', async (req, res) => {
   try {
-    logWithTimestamp('Restart requested')
-    await stopServerProcess()
+    wrapperLogger.info('Server restart requested by user')
+    wrapperLogger.info('Beginning server restart sequence...')
+
+    const stopResult = await stopServerProcess()
+    if (stopResult) {
+      wrapperLogger.info('Server successfully stopped for restart')
+    } else {
+      wrapperLogger.warn('Server was not running, proceeding with start')
+    }
+
     // Wait a moment before starting
+    wrapperLogger.debug('Waiting 1 second before starting server...')
     await new Promise((resolve) => setTimeout(resolve, 1000))
-    const result = await startServerProcess()
+
+    const startResult = await startServerProcess()
+    if (startResult) {
+      wrapperLogger.info('Server restart completed successfully')
+    } else {
+      wrapperLogger.warn('Server restart completed but server was already running')
+    }
+
     res.json({
       success: true,
       message: 'Server restarted successfully',
     })
   } catch (error) {
+    wrapperLogger.error(`Server restart failed: ${error.message}`)
     res.status(500).json({
       success: false,
       error: error.message,
@@ -180,18 +240,18 @@ app.post('/wrapper/restart', async (req, res) => {
 
 // Start the wrapper server
 app.listen(WRAPPER_PORT, () => {
-  logWithTimestamp(`Wrapper server listening on port ${WRAPPER_PORT}`)
+  wrapperLogger.info(`Wrapper server listening on port ${WRAPPER_PORT}`)
 
   // Auto-start the main server on wrapper startup
-  logWithTimestamp('Auto-starting main server...')
+  wrapperLogger.info('Auto-starting main server...')
   startServerProcess().catch((err) => {
-    logWithTimestamp(`Failed to auto-start server: ${err.message}`)
+    wrapperLogger.error(`Failed to auto-start server: ${err.message}`)
   })
 })
 
 // Graceful shutdown of wrapper
 process.on('SIGINT', async () => {
-  logWithTimestamp('Wrapper shutting down...')
+  wrapperLogger.info('Wrapper received SIGINT, shutting down...')
   if (serverProcess) {
     await stopServerProcess()
   }
@@ -199,7 +259,7 @@ process.on('SIGINT', async () => {
 })
 
 process.on('SIGTERM', async () => {
-  logWithTimestamp('Wrapper shutting down...')
+  wrapperLogger.info('Wrapper received SIGTERM, shutting down...')
   if (serverProcess) {
     await stopServerProcess()
   }

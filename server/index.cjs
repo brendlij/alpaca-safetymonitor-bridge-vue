@@ -11,6 +11,8 @@ const { MqttManager } = require('./mqtt.cjs')
 
 // Load configuration
 const config = loadConfig()
+// Set logger level from config
+logger.setLevel(config.logging?.level || 'info')
 const HTTP_PORT = Number(process.env.PORT || config.server.httpPort)
 const DISCOVERY_PORT = Number(process.env.DISCOVERY_PORT || config.server.discoveryPort)
 
@@ -40,18 +42,18 @@ function main() {
 
   // MQTT event handlers
   mqttManager.on('connected', () => {
-    emitLog('info', 'MQTT connected')
+    emitLog('info', 'MQTT connected', { type: 'mqtt', action: 'connected' })
   })
 
   mqttManager.on('disconnected', () => {
-    emitLog('warn', 'MQTT disconnected')
+    emitLog('warn', 'MQTT disconnected', { type: 'mqtt', action: 'disconnected' })
 
     // Auto-reconnect if enabled and autoConnect is true
     const currentConfig = getConfig()
     if (currentConfig.mqtt.enabled && currentConfig.mqtt.autoConnect) {
       setTimeout(() => {
         if (!mqttManager.isConnected()) {
-          emitLog('info', 'Attempting MQTT auto-reconnect...')
+          emitLog('info', 'Attempting MQTT auto-reconnect...', { type: 'mqtt', action: 'reconnecting' })
           mqttManager.connect(currentConfig.mqtt)
         }
       }, 3000) // Reduced delay for faster reconnection
@@ -59,17 +61,33 @@ function main() {
   })
 
   mqttManager.on('error', (error) => {
-    emitLog('error', `MQTT error: ${error.message}`)
+    emitLog('error', `MQTT error: ${error.message}`, { 
+      type: 'mqtt', 
+      action: 'error', 
+      error: error.message,
+      stack: error.stack 
+    })
   })
 
   mqttManager.on('message', (topic, message) => {
-    emitLog('info', `MQTT message received: ${topic} = ${message}`)
+    emitLog('info', `MQTT message received: ${topic} = ${message}`, { 
+      type: 'mqtt', 
+      action: 'message_received',
+      topic,
+      message,
+      timestamp: new Date().toISOString()
+    })
 
     // Handle safety commands
     if (topic.endsWith('/command/safe')) {
       // First try simple boolean strings
       if (message === 'true' || message === 'false') {
-        emitLog('info', `Processing simple MQTT safety command: ${message}`)
+        emitLog('info', `Processing simple MQTT safety command: ${message}`, {
+          type: 'safety',
+          action: 'command_received',
+          command: message,
+          source: 'mqtt'
+        })
         state.setSafe(message === 'true', 'MQTT command')
         return
       }
@@ -80,7 +98,13 @@ function main() {
 
         // Check if it's a simple boolean value
         if (typeof data === 'boolean') {
-          emitLog('info', `Processing JSON boolean MQTT safety command: ${data}`)
+          emitLog('info', `Processing JSON boolean MQTT safety command: ${data}`, {
+            type: 'safety',
+            action: 'command_processed',
+            command: data,
+            source: 'mqtt',
+            format: 'json_boolean'
+          })
           state.setSafe(data, 'MQTT command')
           return
         }
@@ -90,6 +114,15 @@ function main() {
           emitLog(
             'info',
             `Processing MQTT safety command: safe=${data.safe}, reason="${data.reason || 'MQTT command'}"`,
+            {
+              type: 'safety',
+              action: 'command_processed',
+              safe: data.safe,
+              reason: data.reason || 'MQTT command',
+              source: 'mqtt',
+              format: 'json_object',
+              payload: data
+            }
           )
           state.setSafe(data.safe, data.reason || 'MQTT command')
           return
@@ -196,6 +229,15 @@ function main() {
     req.on('close', () => bus.off('log', onLog))
   })
 
+  // Admin: receive logs from wrapper (internal endpoint)
+  app.post('/admin/logs/wrapper', (req, res) => {
+    const { level, msg, meta } = req.body || {}
+    if (typeof level === 'string' && typeof msg === 'string') {
+      emitLog(level, msg, meta)
+    }
+    res.json({ ok: true })
+  })
+
   // Admin: set safety state
   app.post('/admin/safe', (req, res) => {
     const body = req.body || {}
@@ -221,10 +263,14 @@ function main() {
     try {
       const success = saveConfig(req.body)
       if (success) {
+        const newConfig = getConfig()
+        
+        // Update logger level from new config
+        logger.setLevel(newConfig.logging?.level || 'info')
+        
         logger.info('Configuration updated via admin')
 
         // Reconnect MQTT with new config if enabled and auto-connect is on
-        const newConfig = getConfig()
         if (newConfig.mqtt.enabled && newConfig.mqtt.autoConnect) {
           mqttManager.connect(newConfig.mqtt)
         } else if (!newConfig.mqtt.enabled) {

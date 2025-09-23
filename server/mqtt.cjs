@@ -9,12 +9,29 @@ class MqttManager extends EventEmitter {
     this.config = null
     this.connected = false
     this.messageCount = 0
+
+    // Cooldown tracking to prevent log spam
+    this.lastReconnectLog = 0
+    this.lastConnectionLog = 0
+    this.lastDisconnectionLog = 0
+    this.lastErrorLog = 0
+    this.reconnectLogCooldown = 10000 // 10 seconds
+    this.connectionLogCooldown = 5000 // 5 seconds
+    this.errorLogCooldown = 5000 // 5 seconds
+    this.errorCount = 0
   }
 
   connect(config) {
     if (this.client) {
       this.disconnect()
     }
+
+    // Reset cooldown timers on manual connect
+    this.lastReconnectLog = 0
+    this.lastConnectionLog = 0
+    this.lastDisconnectionLog = 0
+    this.lastErrorLog = 0
+    this.errorCount = 0
 
     this.config = config
     if (!config.enabled) {
@@ -39,11 +56,15 @@ class MqttManager extends EventEmitter {
 
       this.client.on('connect', () => {
         this.connected = true
-        this.logger.info('MQTT connected successfully', {
-          host: config.host,
-          port: config.port,
-          clientId: config.clientId,
-        })
+        const now = Date.now()
+        if (now - this.lastConnectionLog > this.connectionLogCooldown) {
+          this.logger.info('MQTT connected successfully', {
+            host: config.host,
+            port: config.port,
+            clientId: config.clientId,
+          })
+          this.lastConnectionLog = now
+        }
         this.emit('connected')
 
         // Subscribe to command topic
@@ -66,27 +87,53 @@ class MqttManager extends EventEmitter {
       })
 
       this.client.on('error', (error) => {
-        this.logger.error('MQTT error', { error: error.message })
         this.connected = false
+        const now = Date.now()
+        this.errorCount++
+        if (now - this.lastErrorLog > this.errorLogCooldown) {
+          if (this.errorCount > 1) {
+            this.logger.error(`MQTT error (${this.errorCount} similar errors suppressed)`, {
+              error: error.message,
+            })
+          } else {
+            this.logger.error('MQTT error', { error: error.message })
+          }
+          this.lastErrorLog = now
+          this.errorCount = 0
+        }
         this.emit('error', error)
       })
 
       this.client.on('close', () => {
         const wasConnected = this.connected
         this.connected = false
-        this.logger.warn('MQTT connection closed', { wasConnected })
+        const now = Date.now()
+        if (now - this.lastDisconnectionLog > this.connectionLogCooldown) {
+          this.logger.warn('MQTT connection closed', { wasConnected })
+          this.lastDisconnectionLog = now
+        }
         this.emit('disconnected')
       })
 
       this.client.on('offline', () => {
         const wasConnected = this.connected
         this.connected = false
-        this.logger.warn('MQTT client offline', { wasConnected })
+        const now = Date.now()
+        if (now - this.lastDisconnectionLog > this.connectionLogCooldown) {
+          this.logger.warn('MQTT client offline', { wasConnected })
+          this.lastDisconnectionLog = now
+        }
         this.emit('offline')
       })
 
       this.client.on('reconnect', () => {
-        this.logger.info('MQTT attempting to reconnect...')
+        const now = Date.now()
+        if (now - this.lastReconnectLog > this.reconnectLogCooldown) {
+          this.logger.info(
+            'MQTT attempting to reconnect... (further reconnect attempts will be throttled)',
+          )
+          this.lastReconnectLog = now
+        }
       })
     } catch (error) {
       this.logger.error('Failed to connect to MQTT broker', { error: error.message })

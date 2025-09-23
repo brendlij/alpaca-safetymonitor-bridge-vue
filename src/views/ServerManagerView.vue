@@ -51,12 +51,6 @@
           </svg>
           {{ starting ? 'Starting...' : 'Start Services' }}
         </button>
-        <div class="button-hint" v-if="!status && !config">
-          <small
-            >⚠️ Server process is not running. Use the Start Services button above or run:
-            <code>npm run dev:all</code></small
-          >
-        </div>
         <button @click="showRestartConfirm" :disabled="!status || restarting" class="btn-restart">
           <svg class="icon" viewBox="0 0 24 24">
             <path
@@ -134,16 +128,62 @@
     </div>
 
     <h2>Logs</h2>
-    <div class="log-panel" ref="logPanelRef">
+    
+    <!-- Log View Tabs -->
+    <div class="log-tabs">
+      <button 
+        class="tab-button" 
+        :class="{ active: activeLogTab === 'simple' }"
+        @click="activeLogTab = 'simple'"
+      >
+        Simple Logs
+      </button>
+      <button 
+        class="tab-button" 
+        :class="{ active: activeLogTab === 'detailed' }"
+        @click="activeLogTab = 'detailed'"
+      >
+        Detailed Logs
+      </button>
+      <div class="log-controls">
+        <button @click="clearLogs" class="btn-clear-logs">Clear Logs</button>
+        <span class="log-count">{{ logs.length }} entries</span>
+      </div>
+    </div>
+
+    <!-- Simple Log View -->
+    <div v-if="activeLogTab === 'simple'" class="log-panel simple-logs" ref="simpleLogPanelRef">
       <div
         v-for="entry in logs"
-        :key="entry.ts + '-' + entry.level"
-        class="log-entry"
+        :key="entry.ts + '-simple'"
+        class="log-entry simple"
         :class="entry.level"
       >
         <span class="ts">{{ formatTs(entry.ts) }}</span>
         <span class="lvl">{{ entry.level.toUpperCase() }}</span>
-        <span class="msg">{{ entry.msg }}</span>
+        <span class="msg">{{ formatSimpleMessage(entry) }}</span>
+      </div>
+    </div>
+
+    <!-- Detailed Log View -->
+    <div v-if="activeLogTab === 'detailed'" class="log-panel detailed-logs" ref="detailedLogPanelRef">
+      <div
+        v-for="entry in logs"
+        :key="entry.ts + '-detailed'"
+        class="log-entry detailed"
+        :class="entry.level"
+      >
+        <div class="log-header">
+          <span class="ts">{{ formatTs(entry.ts) }}</span>
+          <span class="lvl">{{ entry.level.toUpperCase() }}</span>
+          <span class="log-type" v-if="entry.meta?.type">{{ entry.meta.type.toUpperCase() }}</span>
+        </div>
+        <div class="log-content">
+          <div class="msg">{{ entry.msg }}</div>
+          <div v-if="entry.meta && hasDetailedMeta(entry.meta)" class="meta">
+            <pre>{{ formatMeta(entry.meta) }}</pre>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -228,12 +268,17 @@ type Config = {
 
 const status = ref<Status | null>(null)
 const logs = ref<LogEntry[]>([])
-const logPanelRef = ref<HTMLElement | null>(null)
 const config = ref<Config | null>(null)
 let es: EventSource | null = null
+let wrapperEs: EventSource | null = null
 const safeReason = ref('')
 const restarting = ref(false)
 const starting = ref(false)
+
+// Log view state
+const activeLogTab = ref<'simple' | 'detailed'>('simple')
+const simpleLogPanelRef = ref<HTMLElement | null>(null)
+const detailedLogPanelRef = ref<HTMLElement | null>(null)
 
 // Modal states
 const showRestartModal = ref(false)
@@ -310,13 +355,36 @@ async function refreshStatus() {
 }
 
 async function loadRecentLogs() {
-  const res = await fetch(`${apiBase()}/admin/logs?n=200`)
-  logs.value = await res.json()
+  try {
+    const res = await fetch(`${apiBase()}/admin/logs?n=200`)
+    if (res.ok) {
+      logs.value = await res.json()
+    }
+  } catch {}
+
+  // Also load wrapper logs
+  try {
+    const wrapperRes = await fetch('http://localhost:3001/wrapper/logs?n=200')
+    if (wrapperRes.ok) {
+      const wrapperLogs = await wrapperRes.json()
+      // Merge wrapper logs with server logs and sort by timestamp
+      logs.value = [...logs.value, ...wrapperLogs].sort((a, b) => a.ts - b.ts)
+    }
+  } catch {}
+
   await nextTick()
   scrollLogsToBottom()
 }
 
 function subscribeLogs() {
+  subscribeServerLogs()
+  subscribeWrapperLogs()
+}
+
+function subscribeServerLogs() {
+  // Don't create if already exists
+  if (es) return
+
   es = new EventSource(`${apiBase()}/admin/logs/stream`)
   es.addEventListener('log', async (ev) => {
     try {
@@ -336,7 +404,33 @@ function subscribeLogs() {
   })
   es.addEventListener('error', () => {
     es?.close()
-    setTimeout(subscribeLogs, 1500)
+    es = null
+    setTimeout(() => {
+      subscribeServerLogs()
+    }, 1500)
+  })
+}
+
+function subscribeWrapperLogs() {
+  // Don't create if already exists
+  if (wrapperEs) return
+
+  wrapperEs = new EventSource('http://localhost:3001/wrapper/logs/stream')
+  wrapperEs.addEventListener('log', async (ev) => {
+    try {
+      const entry = JSON.parse((ev as MessageEvent).data) as LogEntry
+      logs.value.push(entry)
+      if (logs.value.length > 1000) logs.value.shift()
+      await nextTick()
+      scrollLogsToBottom()
+    } catch {}
+  })
+  wrapperEs.addEventListener('error', () => {
+    wrapperEs?.close()
+    wrapperEs = null
+    setTimeout(() => {
+      subscribeWrapperLogs()
+    }, 1500)
   })
 }
 
@@ -376,54 +470,47 @@ function confirmRestart() {
 
 async function shutdown() {
   try {
-    // Stop polling and close event source before shutdown
+    // Stop polling and close server event source before shutdown
     stopStatusPolling()
     if (es) {
       es.close()
       es = null
     }
+    // Keep wrapper EventSource connected to see shutdown logs
 
     const response = await fetch('/wrapper/stop', { method: 'POST' })
 
     if (response.ok) {
       // Clear status immediately since server will be down
       status.value = null
-      logs.value = []
+      // Don't clear logs - wrapper logs should persist
     } else {
       console.error('Failed to stop server via wrapper')
       // Still clear status as server might be down
       status.value = null
-      logs.value = []
+      // Don't clear logs - wrapper logs should persist
     }
   } catch (error) {
     console.error('Error during shutdown:', error)
     // Still clear status as server is likely down
     status.value = null
-    logs.value = []
+    // Don't clear logs - wrapper logs should persist
   }
 }
 
 async function restartServer() {
   if (restarting.value) return
 
-  // Confirm restart action
-  if (
-    !confirm(
-      'Are you sure you want to restart the server? This will temporarily disconnect all clients.',
-    )
-  ) {
-    return
-  }
-
   restarting.value = true
 
   try {
-    // Stop current polling and close event source
+    // Stop current polling and close main server event source
     stopStatusPolling()
     if (es) {
       es.close()
       es = null
     }
+    // Keep wrapper EventSource connected during restart to see restart logs
 
     // Send restart request to wrapper
     const response = await fetch('/wrapper/restart', { method: 'POST' })
@@ -454,8 +541,8 @@ async function restartServer() {
             await loadConfig()
             restarting.value = false
 
-            // Restart log streaming and status polling
-            subscribeLogs()
+            // Restart server log streaming and status polling
+            subscribeServerLogs()
             startStatusPolling()
             return
           }
@@ -499,7 +586,7 @@ async function restartServer() {
     console.error('Failed to initiate server restart:', error)
 
     // Try to restore connections
-    subscribeLogs()
+    subscribeServerLogs()
     startStatusPolling()
   }
 }
@@ -536,8 +623,65 @@ function formatUptime(sec: number) {
   return `${h}h ${m}m ${s}s`
 }
 
+// Clear logs function
+function clearLogs() {
+  logs.value = []
+}
+
+// Format simple message for readability
+function formatSimpleMessage(entry: LogEntry): string {
+  // For MQTT messages, make them more readable
+  if (entry.msg.includes('MQTT message received')) {
+    const match = entry.msg.match(/MQTT message received: (.+) = (.+)/)
+    if (match) {
+      return `MQTT: ${match[1]} → ${match[2]}`
+    }
+  }
+  
+  // For safety commands, make them cleaner
+  if (entry.msg.includes('Processing') && entry.msg.includes('safety command')) {
+    const match = entry.msg.match(/Processing.*safety command: (.+)/)
+    if (match) {
+      return `Safety command: ${match[1]}`
+    }
+  }
+  
+  // Remove redundant prefixes for cleaner display
+  return entry.msg
+    .replace(/^MQTT /, '')
+    .replace(/^Server /, '')
+    .replace(/^Client /, '')
+    .replace(/^Safety /, '')
+}
+
+// Check if metadata has detailed information worth showing
+function hasDetailedMeta(meta: unknown): boolean {
+  if (!meta || typeof meta !== 'object') return false
+  
+  // Skip simple string meta
+  if (typeof meta === 'string') return false
+  
+  // Check if it has structured data
+  const keys = Object.keys(meta as Record<string, unknown>)
+  return keys.length > 0 && keys.some(key => key !== 'type')
+}
+
+// Format metadata for detailed view
+function formatMeta(meta: unknown): string {
+  if (!meta) return ''
+  
+  // Clone and remove type field for cleaner display
+  const cleanMeta = { ...(meta as Record<string, unknown>) }
+  delete cleanMeta.type
+  
+  // If empty after removing type, don't show anything
+  if (Object.keys(cleanMeta).length === 0) return ''
+  
+  return JSON.stringify(cleanMeta, null, 2)
+}
+
 function scrollLogsToBottom() {
-  const el = logPanelRef.value
+  const el = activeLogTab.value === 'simple' ? simpleLogPanelRef.value : detailedLogPanelRef.value
   if (!el) return
   el.scrollTop = el.scrollHeight
 }
@@ -552,6 +696,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   es?.close()
+  wrapperEs?.close()
   stopStatusPolling()
 })
 </script>
@@ -798,6 +943,66 @@ button:disabled {
   padding: 10px 12px;
 }
 
+/* Log Tabs */
+.log-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #2a2b2d;
+  padding-bottom: 8px;
+}
+
+.tab-button {
+  background: #1f2023;
+  border: 1px solid #2a2b2d;
+  color: #94a3b8;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.tab-button:hover {
+  background: #262629;
+  border-color: #3a3b3d;
+}
+
+.tab-button.active {
+  background: #1e40af;
+  border-color: #3b82f6;
+  color: white;
+}
+
+.log-controls {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-clear-logs {
+  background: #374151;
+  border: 1px solid #4b5563;
+  color: #d1d5db;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-clear-logs:hover {
+  background: #4b5563;
+  border-color: #6b7280;
+}
+
+.log-count {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* Log Panels */
 .log-panel {
   height: 300px;
   overflow: auto;
@@ -806,30 +1011,115 @@ button:disabled {
   border-radius: 8px;
   padding: 8px;
 }
-.log-entry {
+
+/* Simple Log Entry */
+.log-entry.simple {
   display: grid;
   grid-template-columns: 90px 70px 1fr;
   gap: 8px;
   padding: 2px 4px;
   border-radius: 6px;
 }
-.log-entry:hover {
+
+.log-entry.simple:hover {
   background: #181a1c;
 }
+
+/* Detailed Log Entry */
+.log-entry.detailed {
+  padding: 8px;
+  margin-bottom: 6px;
+  border: 1px solid #2a2b2d;
+  border-radius: 6px;
+  background: #12141a;
+}
+
+.log-entry.detailed:hover {
+  border-color: #3a3b3d;
+}
+
+.log-entry.detailed .log-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+
+.log-entry.detailed .log-type {
+  background: #374151;
+  color: #9ca3af;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.log-entry.detailed .log-content {
+  padding-left: 4px;
+}
+
+.log-entry.detailed .msg {
+  margin-bottom: 6px;
+  color: #e5e7eb;
+}
+
+.log-entry.detailed .meta {
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  padding: 8px;
+  margin-top: 6px;
+}
+
+.log-entry.detailed .meta pre {
+  margin: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 11px;
+  color: #7dd3fc;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Common log entry styles for both views */
 .log-entry .ts {
   color: #94a3b8;
+  font-size: 12px;
 }
+
 .log-entry .lvl {
   color: #a78bfa;
+  font-weight: 600;
+  font-size: 12px;
 }
+
 .log-entry.info .lvl {
   color: #60a5fa;
 }
+
 .log-entry.warn .lvl {
   color: #f59e0b;
 }
+
 .log-entry.error .lvl {
   color: #f87171;
+}
+
+/* Level-specific colors for detailed view type badges */
+.log-entry.info.detailed .log-type {
+  background: #1e3a8a;
+  color: #93c5fd;
+}
+
+.log-entry.warn.detailed .log-type {
+  background: #92400e;
+  color: #fbbf24;
+}
+
+.log-entry.error.detailed .log-type {
+  background: #991b1b;
+  color: #fca5a5;
 }
 
 button.active {
