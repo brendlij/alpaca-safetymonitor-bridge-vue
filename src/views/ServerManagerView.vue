@@ -174,7 +174,7 @@
       @focus="logPanelFocused = 'simple'"
     >
       <div
-        v-for="entry in logs"
+        v-for="entry in filteredLogs"
         :key="entry.ts + '-simple'"
         class="log-entry simple"
         :class="entry.level"
@@ -196,7 +196,7 @@
       @focus="logPanelFocused = 'detailed'"
     >
       <div
-        v-for="entry in logs"
+        v-for="entry in filteredLogs"
         :key="entry.ts + '-detailed'"
         class="log-entry detailed"
         :class="entry.level"
@@ -357,6 +357,24 @@ const mqttStatusText = computed(() => {
   return mqttStatus.connected
     ? `Connected (${mqttStatus.messageCount} msgs)${autoConnectText}`
     : `Disconnected${autoConnectText}`
+})
+
+// Filter logs based on configured log level
+const filteredLogs = computed(() => {
+  const configuredLevel = config.value?.logging?.level?.toLowerCase() || 'info'
+
+  // Define log level hierarchy (lower index = higher priority)
+  const logLevels = ['error', 'warn', 'info', 'debug']
+  const configuredLevelIndex = logLevels.indexOf(configuredLevel)
+
+  // If configured level is not found, default to info
+  if (configuredLevelIndex === -1) {
+    return logs.value.filter((log) => ['error', 'warn', 'info'].includes(log.level))
+  }
+
+  // Show logs at or above the configured level
+  const allowedLevels = logLevels.slice(0, configuredLevelIndex + 1)
+  return logs.value.filter((log) => allowedLevels.includes(log.level))
 })
 
 const startServer = async () => {
