@@ -15,7 +15,8 @@
     "lint": "eslint . --fix",
     "format": "prettier --write src/",
     "server": "node server/index.cjs",
-    "dev:all": "run-p server dev"
+    "wrapper": "node wrapper-server.cjs",
+    "dev:all": "run-p wrapper dev"
   },
   "dependencies": {
     "@mdi/js": "^7.4.47",

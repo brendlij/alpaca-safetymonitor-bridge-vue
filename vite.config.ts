@@ -14,6 +14,11 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      // wrapper server for process management
+      '/wrapper': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
       // backend management + alpaca endpoints
       '/admin': {
         target: 'http://localhost:11111',

@@ -4,7 +4,11 @@
       <h1>Settings</h1>
       <div class="actions">
         <button @click="loadConfig">Reload</button>
-        <button @click="saveConfig" :disabled="saving">
+        <button
+          @click="saveConfig"
+          :disabled="saving"
+          :class="{ 'has-changes': hasUnsavedChanges }"
+        >
           {{ saving ? 'Saving...' : 'Save' }}
         </button>
       </div>
@@ -41,12 +45,26 @@
 
       <!-- MQTT Configuration -->
       <div class="card">
-        <h2>MQTT Configuration</h2>
+        <div class="card-header">
+          <h2>MQTT Configuration</h2>
+          <div class="mqtt-status-display" v-if="config.mqtt.enabled">
+            <span
+              class="mqtt-status"
+              :class="{ connected: mqttConnected, disconnected: !mqttConnected }"
+            >
+              {{ mqttConnected ? '● Connected' : '○ Disconnected' }}
+            </span>
+          </div>
+        </div>
         <div class="form-group">
-          <label class="checkbox-label">
-            <input v-model="config.mqtt.enabled" type="checkbox" />
-            Enable MQTT
+          <label class="custom-checkbox" :class="{ disabled: !serverConnected }">
+            <input v-model="config.mqtt.enabled" type="checkbox" :disabled="!serverConnected" />
+            <span class="checkbox-slider"></span>
+            <span class="checkbox-text">Enable MQTT</span>
           </label>
+        </div>
+        <div class="info" v-if="config.mqtt.enabled">
+          <small>✓ Auto-connect is always enabled when MQTT is enabled</small>
         </div>
         <div class="form-group" :class="{ disabled: !config.mqtt.enabled }">
           <label>MQTT Broker Host</label>
@@ -142,7 +160,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 
 interface Config {
   server: {
@@ -151,6 +169,7 @@ interface Config {
   }
   mqtt: {
     enabled: boolean
+    autoConnect: boolean
     host: string
     port: number
     username: string
@@ -171,6 +190,7 @@ const config = ref<Config>({
   },
   mqtt: {
     enabled: false,
+    autoConnect: true,
     host: 'localhost',
     port: 1883,
     username: '',
@@ -187,6 +207,11 @@ const config = ref<Config>({
 const saving = ref(false)
 const message = ref('')
 const messageType = ref<'success' | 'error' | 'info'>('info')
+
+// Server and MQTT status tracking
+const serverConnected = ref(false)
+const mqttConnected = ref(false)
+let statusInterval: number | null = null
 
 const configPreview = computed(() => {
   const configCopy = JSON.parse(JSON.stringify(config.value))
@@ -207,6 +232,8 @@ async function loadConfig() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const loadedConfig = await res.json()
     config.value = { ...config.value, ...loadedConfig }
+    configLoaded.value = true
+    hasUnsavedChanges.value = false
     showMessage('Configuration loaded successfully', 'success')
   } catch (error) {
     showMessage(`Failed to load configuration: ${error}`, 'error')
@@ -227,6 +254,7 @@ async function saveConfig() {
       throw new Error(errorText || `HTTP ${res.status}`)
     }
 
+    hasUnsavedChanges.value = false
     showMessage('Configuration saved successfully', 'success')
   } catch (error) {
     showMessage(`Failed to save configuration: ${error}`, 'error')
@@ -235,16 +263,107 @@ async function saveConfig() {
   }
 }
 
-function showMessage(text: string, type: 'success' | 'error' | 'info') {
+function showMessage(text: string, type: 'success' | 'error' | 'info', duration = 5000) {
   message.value = text
   messageType.value = type
   setTimeout(() => {
     message.value = ''
-  }, 5000)
+  }, duration)
 }
 
-onMounted(() => {
-  loadConfig()
+// Server and MQTT connection status management
+async function checkMqttStatus() {
+  try {
+    const res = await fetch(`${apiBase()}/admin/status`)
+    if (res.ok) {
+      const status = await res.json()
+      serverConnected.value = true
+      mqttConnected.value = status?.mqtt?.connected || false
+    } else {
+      serverConnected.value = false
+      mqttConnected.value = false
+    }
+  } catch {
+    // Server not responding
+    serverConnected.value = false
+    mqttConnected.value = false
+  }
+}
+
+// MQTT connection is now fully automatic - no manual controls needed
+
+function startStatusPolling() {
+  statusInterval = setInterval(checkMqttStatus, 3000)
+}
+
+function stopStatusPolling() {
+  if (statusInterval) {
+    clearInterval(statusInterval)
+    statusInterval = null
+  }
+}
+
+// Track if config has been loaded to prevent auto-save on initial load
+const configLoaded = ref(false)
+const hasUnsavedChanges = ref(false)
+
+// Auto-save watcher for MQTT enabled setting
+watch(
+  () => config.value.mqtt.enabled,
+  async (newValue, oldValue) => {
+    if (configLoaded.value && oldValue !== undefined && newValue !== oldValue) {
+      // Always set autoConnect to true when MQTT is enabled
+      config.value.mqtt.autoConnect = newValue
+      await saveConfig()
+      showMessage('✓ MQTT setting saved', 'success', 2000)
+      hasUnsavedChanges.value = false
+    } else if (configLoaded.value) {
+      hasUnsavedChanges.value = true
+    }
+  },
+)
+
+// Watch for changes in other fields to track unsaved changes
+watch(
+  () => [
+    config.value.server.httpPort,
+    config.value.server.discoveryPort,
+    config.value.mqtt.host,
+    config.value.mqtt.port,
+    config.value.mqtt.username,
+    config.value.mqtt.password,
+    config.value.mqtt.baseTopic,
+    config.value.mqtt.clientId,
+    config.value.logging.level,
+    config.value.logging.maxLogEntries,
+  ],
+  () => {
+    if (configLoaded.value) {
+      hasUnsavedChanges.value = true
+    }
+  },
+  { deep: true },
+)
+
+// Warning when leaving page with unsaved changes
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (hasUnsavedChanges.value) {
+    event.preventDefault()
+    event.returnValue = 'You have unsaved changes. Are you sure you want to leave?'
+    return event.returnValue
+  }
+}
+
+onMounted(async () => {
+  await loadConfig()
+  await checkMqttStatus()
+  startStatusPolling()
+  window.addEventListener('beforeunload', handleBeforeUnload)
+})
+
+onBeforeUnmount(() => {
+  stopStatusPolling()
+  window.removeEventListener('beforeunload', handleBeforeUnload)
 })
 </script>
 
@@ -284,6 +403,16 @@ button:disabled {
   cursor: not-allowed;
 }
 
+button.has-changes {
+  background: #059669;
+  border-color: #10b981;
+  color: white;
+}
+
+button.has-changes:hover:not(:disabled) {
+  background: #047857;
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -304,6 +433,14 @@ button:disabled {
   color: #cbd5e1;
 }
 
+.card-header + * {
+  margin-top: 0;
+}
+
+.card-header h2 {
+  margin-bottom: 0;
+}
+
 .form-group {
   margin-bottom: 12px;
 }
@@ -319,6 +456,7 @@ button:disabled {
   color: #cbd5e1;
 }
 
+/* Legacy checkbox styles - kept for compatibility */
 .checkbox-label {
   display: flex !important;
   align-items: center;
@@ -396,5 +534,117 @@ input:disabled {
   background: #1e3a8a;
   border: 1px solid #3b82f6;
   color: #3b82f6;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.card-header h2 {
+  margin: 0;
+}
+
+.mqtt-status-display {
+  display: flex;
+  align-items: center;
+}
+
+.mqtt-status {
+  font-size: 14px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.mqtt-status.connected {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.mqtt-status.disconnected {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* MQTT button styles removed - connection is now fully automatic */
+
+/* Custom Animated Checkboxes */
+.custom-checkbox {
+  display: flex !important;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+
+.custom-checkbox input[type='checkbox'] {
+  display: none;
+}
+
+.checkbox-slider {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: #374151;
+  border-radius: 12px;
+  transition: all 0.3s ease;
+  border: 2px solid #4b5563;
+}
+
+.checkbox-slider::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #9ca3af;
+  border-radius: 50%;
+  transition: all 0.3s ease;
+  transform: translateX(0);
+}
+
+.custom-checkbox input[type='checkbox']:checked + .checkbox-slider {
+  background: #059669;
+  border-color: #10b981;
+}
+
+.custom-checkbox input[type='checkbox']:checked + .checkbox-slider::before {
+  background: #ffffff;
+  transform: translateX(18px);
+}
+
+.custom-checkbox input[type='checkbox']:disabled + .checkbox-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.custom-checkbox input[type='checkbox']:disabled + .checkbox-slider::before {
+  opacity: 0.7;
+}
+
+.checkbox-text {
+  color: #cbd5e1;
+  font-weight: 500;
+}
+
+.form-group.disabled .checkbox-text {
+  opacity: 0.5;
+}
+
+/* Hover effects */
+.custom-checkbox:hover input[type='checkbox']:not(:disabled) + .checkbox-slider {
+  border-color: #6b7280;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.custom-checkbox:hover input[type='checkbox']:checked:not(:disabled) + .checkbox-slider {
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
 }
 </style>

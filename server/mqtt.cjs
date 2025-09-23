@@ -33,11 +33,17 @@ class MqttManager extends EventEmitter {
         clean: true,
         connectTimeout: 4000,
         reconnectPeriod: 1000,
+        keepalive: 60,
+        protocolVersion: 4,
       })
 
       this.client.on('connect', () => {
         this.connected = true
-        this.logger.info('MQTT connected successfully')
+        this.logger.info('MQTT connected successfully', {
+          host: config.host,
+          port: config.port,
+          clientId: config.clientId,
+        })
         this.emit('connected')
 
         // Subscribe to command topic
@@ -66,15 +72,21 @@ class MqttManager extends EventEmitter {
       })
 
       this.client.on('close', () => {
+        const wasConnected = this.connected
         this.connected = false
-        this.logger.warn('MQTT connection closed')
+        this.logger.warn('MQTT connection closed', { wasConnected })
         this.emit('disconnected')
       })
 
       this.client.on('offline', () => {
+        const wasConnected = this.connected
         this.connected = false
-        this.logger.warn('MQTT client offline')
+        this.logger.warn('MQTT client offline', { wasConnected })
         this.emit('offline')
+      })
+
+      this.client.on('reconnect', () => {
+        this.logger.info('MQTT attempting to reconnect...')
       })
     } catch (error) {
       this.logger.error('Failed to connect to MQTT broker', { error: error.message })

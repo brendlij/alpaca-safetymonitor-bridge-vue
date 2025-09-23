@@ -12,6 +12,7 @@ const DEFAULT_CONFIG = {
   },
   mqtt: {
     enabled: false,
+    autoConnect: true,
     host: 'localhost',
     port: 1883,
     username: '',
@@ -47,6 +48,12 @@ function loadConfig() {
 function saveConfig(config) {
   try {
     currentConfig = mergeConfig(DEFAULT_CONFIG, config)
+
+    // Always ensure autoConnect is true when MQTT is enabled
+    if (currentConfig.mqtt.enabled) {
+      currentConfig.mqtt.autoConnect = true
+    }
+
     const yamlContent = yaml.dump(currentConfig, {
       indent: 2,
       lineWidth: -1,

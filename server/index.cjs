@@ -14,6 +14,11 @@ const config = loadConfig()
 const HTTP_PORT = Number(process.env.PORT || config.server.httpPort)
 const DISCOVERY_PORT = Number(process.env.DISCOVERY_PORT || config.server.discoveryPort)
 
+// Global variables for server components (needed for restart)
+let currentServer = null
+let currentUdp = null
+let currentMqttManager = null
+
 function main() {
   const app = express()
   const state = createState()
@@ -31,6 +36,7 @@ function main() {
 
   // Initialize MQTT manager
   const mqttManager = new MqttManager(logger)
+  currentMqttManager = mqttManager
 
   // MQTT event handlers
   mqttManager.on('connected', () => {
@@ -39,6 +45,17 @@ function main() {
 
   mqttManager.on('disconnected', () => {
     emitLog('warn', 'MQTT disconnected')
+
+    // Auto-reconnect if enabled and autoConnect is true
+    const currentConfig = getConfig()
+    if (currentConfig.mqtt.enabled && currentConfig.mqtt.autoConnect) {
+      setTimeout(() => {
+        if (!mqttManager.isConnected()) {
+          emitLog('info', 'Attempting MQTT auto-reconnect...')
+          mqttManager.connect(currentConfig.mqtt)
+        }
+      }, 3000) // Reduced delay for faster reconnection
+    }
   })
 
   mqttManager.on('error', (error) => {
@@ -145,11 +162,12 @@ function main() {
       discoveryPort: DISCOVERY_PORT,
       connected: state.getConnected(),
       isSafe: state.getIsSafe(),
-      lastClient: state.getLastClientSeen(),
+      lastClient: state.getLastClient ? state.getLastClient() : null,
       uptimeSec: Math.floor(process.uptime()),
       memory: process.memoryUsage(),
       clientConnected: state.getClientConnected ? state.getClientConnected() : false,
       mqtt: mqttManager.getStatus(),
+      serverStartTime: Date.now(), // Add server start timestamp for restart detection
     })
   })
 
@@ -205,9 +223,13 @@ function main() {
       if (success) {
         logger.info('Configuration updated via admin')
 
-        // Reconnect MQTT with new config
+        // Reconnect MQTT with new config if enabled and auto-connect is on
         const newConfig = getConfig()
-        mqttManager.connect(newConfig.mqtt)
+        if (newConfig.mqtt.enabled && newConfig.mqtt.autoConnect) {
+          mqttManager.connect(newConfig.mqtt)
+        } else if (!newConfig.mqtt.enabled) {
+          mqttManager.disconnect()
+        }
 
         res.json({ ok: true, message: 'Configuration saved successfully' })
       } else {
@@ -248,25 +270,96 @@ function main() {
     }, 50)
   })
 
+  // Admin: start server services
+  app.post('/admin/start', (req, res) => {
+    try {
+      logger.info('Start services requested via /admin/start')
+
+      // Restart MQTT if configured
+      const currentConfig = getConfig()
+      if (currentConfig.mqtt.enabled && currentConfig.mqtt.autoConnect) {
+        if (!currentMqttManager?.isConnected?.()) {
+          emitLog('info', 'Starting MQTT connection...')
+          currentMqttManager?.connect(currentConfig.mqtt)
+        }
+      }
+
+      res.json({ ok: true, message: 'Server services start initiated' })
+    } catch (error) {
+      res.status(500).json({ ok: false, error: error.message })
+    }
+  })
+
+  // Admin: restart
+  app.post('/admin/restart', (req, res) => {
+    res.json({ ok: true, message: 'Server restart initiated' })
+    setTimeout(() => {
+      logger.info('Restart requested via /admin/restart')
+
+      // Close current server
+      if (currentServer) {
+        currentServer.close(() => {
+          // Close UDP discovery
+          try {
+            currentUdp?.close?.()
+          } catch {}
+
+          // Close MQTT connection gracefully
+          try {
+            currentMqttManager?.disconnect?.()
+          } catch {}
+
+          logger.info('Server components shut down, restarting...')
+
+          // Restart after a short delay
+          setTimeout(() => {
+            try {
+              main()
+            } catch (error) {
+              logger.error('Failed to restart server', { error: error.message })
+            }
+          }, 500)
+        })
+      }
+    }, 50)
+  })
+
   const server = app.listen(HTTP_PORT, () => {
     logger.info('HTTP server listening', { port: HTTP_PORT })
   })
 
+  // Store server reference for restart functionality
+  currentServer = server
+
+  // Handle server startup errors
+  server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+      logger.error(`Port ${HTTP_PORT} is already in use`)
+    } else {
+      logger.error('Server error', { error: error.message })
+    }
+  })
+
   const udp = startDiscovery({ httpPort: HTTP_PORT, discoveryPort: DISCOVERY_PORT })
+  currentUdp = udp
   logger.info('Discovery started', { discoveryPort: DISCOVERY_PORT })
 
-  // Start MQTT connection if enabled
-  if (config.mqtt.enabled) {
+  // Start MQTT connection if enabled and auto-connect is on
+  if (config.mqtt.enabled && config.mqtt.autoConnect) {
     setTimeout(() => {
+      emitLog('info', 'MQTT auto-connecting on startup')
       mqttManager.connect(config.mqtt)
-    }, 1000) // Small delay to ensure server is fully started
+    }, 500) // Reduced delay for faster startup connection
   }
 
   const shutdown = () => {
     logger.info('Shutting down...')
-    server.close(() => process.exit(0))
+    currentServer?.close(() => process.exit(0))
     try {
-      udp?.close?.()
+      currentUdp?.close?.()
+    } catch {}
+    try {
+      currentMqttManager?.disconnect?.()
     } catch {}
   }
   process.on('SIGINT', shutdown)
