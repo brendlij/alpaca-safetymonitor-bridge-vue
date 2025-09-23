@@ -11,6 +11,19 @@ body {
   color: #cbd5e1;
 }
 
+/* Ensure all buttons and form elements use the same font */
+button,
+input,
+select,
+textarea {
+  font-family: 'SUSE Mono', monospace !important;
+}
+
+/* Remove border radius from all buttons specifically */
+button {
+  border-radius: 0 !important;
+}
+
 .text-center {
   text-align: center;
 }

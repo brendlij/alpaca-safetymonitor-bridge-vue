@@ -127,10 +127,11 @@ button {
   align-items: center;
   gap: 8px;
   padding: 10px 16px;
-  border-radius: 8px;
+  border-radius: 0;
   border: 1px solid;
   cursor: pointer;
   font-weight: 500;
+  font-family: 'SUSE Mono', monospace;
   transition: all 0.2s ease;
 }
 

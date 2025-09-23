@@ -38,8 +38,11 @@
             placeholder="32227"
           />
         </div>
-        <div class="info">
+        <div class="info" v-if="serverConfigChanged">
           <small>⚠️ Server restart required for port changes to take effect</small>
+          <button @click="serverConfigChanged = false" class="btn-dismiss" title="Dismiss">
+            ×
+          </button>
         </div>
       </div>
 
@@ -62,9 +65,6 @@
             <span class="checkbox-slider"></span>
             <span class="checkbox-text">Enable MQTT</span>
           </label>
-        </div>
-        <div class="info" v-if="config.mqtt.enabled">
-          <small>✓ Auto-connect is always enabled when MQTT is enabled</small>
         </div>
         <div class="form-group" :class="{ disabled: !config.mqtt.enabled }">
           <label>MQTT Broker Host</label>
@@ -149,7 +149,9 @@
     <!-- Current Configuration Display -->
     <div class="card">
       <h2>Current Configuration</h2>
-      <pre class="config-preview">{{ configPreview }}</pre>
+      <div class="config-preview-container">
+        <pre class="config-preview yaml-syntax" v-html="highlightedYaml"></pre>
+      </div>
     </div>
 
     <!-- Status Messages -->
@@ -219,8 +221,66 @@ const configPreview = computed(() => {
   if (configCopy.mqtt.password) {
     configCopy.mqtt.password = '••••••••'
   }
-  return JSON.stringify(configCopy, null, 2)
+  return formatAsYaml(configCopy)
 })
+
+const highlightedYaml = computed(() => {
+  const yamlText = configPreview.value
+  return highlightYaml(yamlText)
+})
+
+function highlightYaml(yaml: string): string {
+  console.log('Original YAML:', yaml)
+
+  const highlighted = yaml
+    // Highlight keys (before colon)
+    .replace(/^(\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/gm, '$1<span class="yaml-key">$2</span>:')
+    // Highlight string values (quoted)
+    .replace(/:\s*"([^"]*)"/g, ': <span class="yaml-string">"$1"</span>')
+    // Highlight boolean values
+    .replace(/:\s*(true|false)(?=\s*$)/gm, ': <span class="yaml-boolean">$1</span>')
+    // Highlight numbers (including decimals)
+    .replace(/:\s*(\d+\.?\d*)(?=\s*$)/gm, ': <span class="yaml-number">$1</span>')
+    // Highlight null values
+    .replace(/:\s*(null)(?=\s*$)/gm, ': <span class="yaml-null">$1</span>')
+    // Highlight comments (if any)
+    .replace(/(#.*$)/gm, '<span class="yaml-comment">$1</span>')
+
+  console.log('Highlighted YAML:', highlighted)
+  return highlighted
+}
+
+function formatAsYaml(obj: Record<string, unknown>, indent = 0): string {
+  const spaces = '  '.repeat(indent)
+  let yaml = ''
+
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === null || value === undefined) {
+      yaml += `${spaces}${key}: null\n`
+    } else if (typeof value === 'object' && !Array.isArray(value)) {
+      yaml += `${spaces}${key}:\n`
+      yaml += formatAsYaml(value as Record<string, unknown>, indent + 1)
+    } else if (Array.isArray(value)) {
+      yaml += `${spaces}${key}:\n`
+      value.forEach((item) => {
+        if (typeof item === 'object') {
+          yaml += `${spaces}  -\n`
+          yaml += formatAsYaml(item as Record<string, unknown>, indent + 2)
+        } else {
+          yaml += `${spaces}  - ${item}\n`
+        }
+      })
+    } else if (typeof value === 'string') {
+      yaml += `${spaces}${key}: "${value}"\n`
+    } else if (typeof value === 'boolean') {
+      yaml += `${spaces}${key}: ${value}\n`
+    } else {
+      yaml += `${spaces}${key}: ${value}\n`
+    }
+  }
+
+  return yaml
+}
 
 function apiBase() {
   return ''
@@ -231,17 +291,46 @@ async function loadConfig() {
     const res = await fetch(`${apiBase()}/admin/config`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const loadedConfig = await res.json()
+
+    // Temporarily disable watchers during initial load
+    const wasInitialLoadComplete = initialLoadComplete.value
+    initialLoadComplete.value = false
+
     config.value = { ...config.value, ...loadedConfig }
+
+    // Store original server configuration for comparison
+    originalServerConfig.value = {
+      httpPort: config.value.server.httpPort,
+      discoveryPort: config.value.server.discoveryPort,
+    }
+
     configLoaded.value = true
     hasUnsavedChanges.value = false
-    showMessage('Configuration loaded successfully', 'success')
+    // Clear the server restart warning when configuration is reloaded
+    serverConfigChanged.value = false
+
+    // Re-enable watchers after a short delay to ensure all reactive updates are complete
+    setTimeout(() => {
+      initialLoadComplete.value = true
+    }, 100)
+
+    // Only show success message if this is not the initial page load
+    if (wasInitialLoadComplete) {
+      showMessage('Configuration loaded successfully', 'success')
+    }
   } catch (error) {
     showMessage(`Failed to load configuration: ${error}`, 'error')
   }
 }
-
 async function saveConfig() {
   saving.value = true
+
+  // Check if server configuration changed
+  const serverChanged =
+    originalServerConfig.value &&
+    (originalServerConfig.value.httpPort !== config.value.server.httpPort ||
+      originalServerConfig.value.discoveryPort !== config.value.server.discoveryPort)
+
   try {
     const res = await fetch(`${apiBase()}/admin/config`, {
       method: 'POST',
@@ -252,6 +341,17 @@ async function saveConfig() {
     if (!res.ok) {
       const errorText = await res.text()
       throw new Error(errorText || `HTTP ${res.status}`)
+    }
+
+    // If server config changed, set the flag to show restart warning
+    if (serverChanged) {
+      serverConfigChanged.value = true
+    }
+
+    // Update original server config after successful save
+    originalServerConfig.value = {
+      httpPort: config.value.server.httpPort,
+      discoveryPort: config.value.server.discoveryPort,
     }
 
     hasUnsavedChanges.value = false
@@ -305,19 +405,23 @@ function stopStatusPolling() {
 
 // Track if config has been loaded to prevent auto-save on initial load
 const configLoaded = ref(false)
+const initialLoadComplete = ref(false)
 const hasUnsavedChanges = ref(false)
+const serverConfigChanged = ref(false)
+const originalServerConfig = ref<{ httpPort: number; discoveryPort: number } | null>(null)
 
 // Auto-save watcher for MQTT enabled setting
 watch(
   () => config.value.mqtt.enabled,
   async (newValue, oldValue) => {
-    if (configLoaded.value && oldValue !== undefined && newValue !== oldValue) {
+    // Only auto-save if this is a real user change (not initial load)
+    if (initialLoadComplete.value && oldValue !== undefined && newValue !== oldValue) {
       // Always set autoConnect to true when MQTT is enabled
       config.value.mqtt.autoConnect = newValue
       await saveConfig()
       showMessage('✓ MQTT setting saved', 'success', 2000)
       hasUnsavedChanges.value = false
-    } else if (configLoaded.value) {
+    } else if (configLoaded.value && initialLoadComplete.value) {
       hasUnsavedChanges.value = true
     }
   },
@@ -338,7 +442,7 @@ watch(
     config.value.logging.maxLogEntries,
   ],
   () => {
-    if (configLoaded.value) {
+    if (configLoaded.value && initialLoadComplete.value) {
       hasUnsavedChanges.value = true
     }
   },
@@ -389,9 +493,10 @@ button {
   background: #2a2b2d;
   color: #cbd5e1;
   border: 1px solid #3a3b3e;
-  border-radius: 8px;
+  border-radius: 0;
   padding: 8px 12px;
   cursor: pointer;
+  font-family: 'SUSE Mono', monospace;
 }
 
 button:hover:not(:disabled) {
@@ -474,9 +579,10 @@ select {
   background: #0f1011;
   color: #cbd5e1;
   border: 1px solid #2a2b2d;
-  border-radius: 8px;
+  border-radius: 0;
   padding: 8px 10px;
   font-size: 14px;
+  font-family: 'SUSE Mono', monospace;
 }
 
 input:focus,
@@ -495,9 +601,35 @@ input:disabled {
   padding: 8px;
   background: #1f2937;
   border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .info small {
+  color: #fbbf24;
+  flex: 1;
+}
+
+.btn-dismiss {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 0;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: 0;
+  transition: color 0.2s ease;
+}
+
+.btn-dismiss:hover {
   color: #fbbf24;
 }
 
@@ -509,6 +641,7 @@ input:disabled {
   overflow: auto;
   max-height: 300px;
   font-size: 12px;
+  /* Default text color - will be overridden by YAML syntax highlighting */
   color: #94a3b8;
 }
 
@@ -646,5 +779,67 @@ input:disabled {
 .custom-checkbox:hover input[type='checkbox']:checked:not(:disabled) + .checkbox-slider {
   border-color: #10b981;
   box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+/* YAML Syntax Highlighting - Ultra high specificity */
+.settings .config-preview pre .yaml-key,
+.settings .config-preview .yaml-key,
+pre.config-preview .yaml-key,
+.yaml-syntax .yaml-key {
+  color: #60a5fa !important; /* Light blue for keys */
+  font-weight: 600 !important;
+}
+
+.settings .config-preview pre .yaml-string,
+.settings .config-preview .yaml-string,
+pre.config-preview .yaml-string,
+.yaml-syntax .yaml-string {
+  color: #34d399 !important; /* Green for strings */
+}
+
+.settings .config-preview pre .yaml-number,
+.settings .config-preview .yaml-number,
+pre.config-preview .yaml-number,
+.yaml-syntax .yaml-number {
+  color: #f59e0b !important; /* Amber for numbers */
+}
+
+.settings .config-preview pre .yaml-boolean,
+.settings .config-preview .yaml-boolean,
+pre.config-preview .yaml-boolean,
+.yaml-syntax .yaml-boolean {
+  color: #a78bfa !important; /* Purple for booleans */
+  font-weight: 500 !important;
+}
+
+.settings .config-preview pre .yaml-null,
+.settings .config-preview .yaml-null,
+pre.config-preview .yaml-null,
+.yaml-syntax .yaml-null {
+  color: #9ca3af !important; /* Gray for null values */
+  font-style: italic !important;
+}
+
+.settings .config-preview pre .yaml-comment,
+.settings .config-preview .yaml-comment,
+pre.config-preview .yaml-comment,
+.yaml-syntax .yaml-comment {
+  color: #6b7280 !important; /* Muted gray for comments */
+  font-style: italic !important;
+}
+
+/* Pre element styling for YAML display */
+.config-preview pre {
+  background: rgba(17, 24, 39, 0.8);
+  border: 1px solid #374151;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 0;
+  font-family: 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 </style>

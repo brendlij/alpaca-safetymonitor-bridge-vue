@@ -130,18 +130,12 @@
     <h2 style="margin-bottom: 28px">Logs</h2>
     <div class="log-tabs log-tabs-enhanced">
       <div class="tab-switcher" role="tablist" aria-label="Log tabs">
-        <!-- sliding pill -->
-        <span
-          class="tab-indicator"
-          :style="{ transform: `translateX(${activeIdx * 100}%)` }"
-        ></span>
-
         <button
           class="tab-button btn-log"
           :class="{ active: activeLogTab === 'simple' }"
           role="tab"
           :aria-selected="activeLogTab === 'simple'"
-          @click="activeLogTab = 'simple'"
+          @click="switchToTab('simple')"
         >
           Simple Logs
         </button>
@@ -151,7 +145,7 @@
           :class="{ active: activeLogTab === 'detailed' }"
           role="tab"
           :aria-selected="activeLogTab === 'detailed'"
-          @click="activeLogTab = 'detailed'"
+          @click="switchToTab('detailed')"
         >
           Detailed Logs
         </button>
@@ -248,7 +242,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, nextTick, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue'
 import ConfirmModal from '../components/ConfirmModal.vue'
 
 type Status = {
@@ -323,6 +317,14 @@ function toggleExpandLogs() {
   nextTick(scrollLogsToBottom)
 }
 
+function switchToTab(tab: 'simple' | 'detailed') {
+  activeLogTab.value = tab
+  // Ensure the newest log is visible when switching tabs
+  nextTick(() => {
+    scrollLogsToBottom()
+  })
+}
+
 function selectAllLogs(tab: 'simple' | 'detailed') {
   const refEl = tab === 'simple' ? simpleLogPanelRef.value : detailedLogPanelRef.value
   if (!refEl) return
@@ -337,8 +339,6 @@ function selectAllLogs(tab: 'simple' | 'detailed') {
 // Modal states
 const showRestartModal = ref(false)
 const showShutdownModal = ref(false)
-
-const activeIdx = computed(() => (activeLogTab.value === 'simple' ? 0 : 1))
 
 // MQTT state (now computed from server status)
 const mqttConnected = computed(() => {
@@ -376,6 +376,17 @@ const filteredLogs = computed(() => {
   const allowedLevels = logLevels.slice(0, configuredLevelIndex + 1)
   return logs.value.filter((log) => allowedLevels.includes(log.level))
 })
+
+// Watch for changes in filtered logs and auto-scroll to bottom
+watch(
+  filteredLogs,
+  () => {
+    nextTick(() => {
+      scrollLogsToBottom()
+    })
+  },
+  { flush: 'post' },
+)
 
 const startServer = async () => {
   starting.value = true
@@ -752,7 +763,19 @@ function formatMeta(meta: unknown): string {
 function scrollLogsToBottom() {
   const el = activeLogTab.value === 'simple' ? simpleLogPanelRef.value : detailedLogPanelRef.value
   if (!el) return
-  el.scrollTop = el.scrollHeight
+
+  // Use scrollTo for smoother scrolling and better browser support
+  el.scrollTo({
+    top: el.scrollHeight,
+    behavior: 'smooth',
+  })
+
+  // Fallback for browsers that don't support smooth scrolling
+  setTimeout(() => {
+    if (el) {
+      el.scrollTop = el.scrollHeight
+    }
+  }, 10)
 }
 
 onMounted(async () => {
@@ -791,10 +814,11 @@ button {
   background: #2a2b2d;
   color: #cbd5e1;
   border: 1px solid #3a3b3e;
-  border-radius: 8px;
+  border-radius: 0;
   padding: 10px 16px;
   cursor: pointer;
   font-weight: 500;
+  font-family: 'SUSE Mono', monospace;
   transition: all 0.2s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
@@ -1028,66 +1052,47 @@ button:disabled {
   gap: 18px;
 }
 .tab-switcher {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr 1fr; /* 2 Tabs */
+  display: flex;
+  align-items: center;
   gap: 0;
-  background: #0f1011;
-  border: 1px solid #2a2b2d;
-  border-radius: 10px;
-  padding: 2px;
-  overflow: hidden;
-}
-.tab-switcher .tab-indicator {
-  position: absolute;
-  left: 0; /* immer am linken Rand starten */
-  width: 50%; /* genau halbe Breite bei 2 Tabs */
-  height: calc(100% - 4px);
-  margin: 2px; /* sorgt für den 2px Rand überall */
-  background: #6b7280;
-  border-radius: 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-  transition: transform 0.25s ease;
-  z-index: 0;
-}
-.tab-switcher .tab-button {
-  position: relative;
-  z-index: 1;
-  background: transparent !important; /* überschreibt .btn-log */
-  box-shadow: none !important;
-  border: none !important;
-  color: #94a3b8;
-  font-weight: 600;
-  padding: 10px 16px;
-  border-radius: 8px; /* für Fokusring */
-  cursor: pointer;
-  transition: color 0.2s ease;
-}
-.tab-switcher .tab-button:hover {
-  color: #e5e7eb;
-}
-.tab-switcher .tab-button.active {
-  color: #ffffff;
-}
-/* Bestehende .btn-log-Styles neutralisieren innerhalb des Switchers */
-.tab-switcher .btn-log {
   background: transparent;
+  border-radius: 0;
+  overflow: visible;
+  border: none;
 }
 
-/* Optional: Fokus sichtbarer machen */
+.tab-switcher .tab-button {
+  background: #4a5568;
+  border: none;
+  color: #cbd5e1;
+  border-radius: 0;
+  font-weight: 500;
+  padding: 10px 20px;
+  transition:
+    background 0.3s ease,
+    color 0.3s ease;
+  box-shadow: none;
+  outline: none;
+  cursor: pointer;
+}
+
+.tab-switcher .tab-button:hover:not(.active) {
+  background: #5a6570;
+  color: #fff;
+}
+
+.tab-switcher .tab-button.active {
+  background: #6b7280;
+  color: #fff;
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+
+/* Focus styles for accessibility */
 .tab-switcher .tab-button:focus-visible {
   outline: 2px solid #3b82f6;
   outline-offset: 2px;
-}
-
-/* Sanftere Motion für Nutzer mit reduced motion */
-@media (prefers-reduced-motion: reduce) {
-  .tab-switcher .tab-indicator {
-    transition: none;
-  }
-  .tab-switcher .tab-button {
-    transition: none;
-  }
 }
 .btn-log {
   background: #4a5568;
@@ -1095,22 +1100,25 @@ button:disabled {
   color: #cbd5e1;
   border-radius: 0;
   font-weight: 500;
-  padding: 8px 20px;
+  padding: 10px 20px;
   transition:
-    background 0.2s,
-    color 0.2s;
+    background 0.3s ease,
+    color 0.3s ease;
   box-shadow: none;
+  outline: none;
 }
-.btn-log.active,
-.tab-button.active {
-  background: #6b7280;
-  color: #fff;
-  border-bottom: none;
-  z-index: 1;
-}
-.btn-log:not(.active):hover {
+
+.btn-log:hover:not(.active) {
   background: #5a6570;
   color: #fff;
+}
+
+.btn-log.active {
+  background: #6b7280;
+  color: #fff;
+  border: none;
+  box-shadow: none;
+  outline: none;
 }
 .log-hint {
   font-size: 12px;
