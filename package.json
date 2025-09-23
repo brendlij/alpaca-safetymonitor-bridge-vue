@@ -13,10 +13,14 @@
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
     "lint": "eslint . --fix",
+    "lint:check": "eslint .",
     "format": "prettier --write src/",
     "server": "node server/index.cjs",
     "wrapper": "node wrapper-server.cjs",
-    "dev:all": "run-p wrapper dev"
+    "dev:all": "run-p wrapper dev",
+    "start": "NODE_ENV=production node wrapper-server.cjs",
+    "docker:build": "docker build -t alpaca-safety-monitor .",
+    "docker:run": "docker run --network host alpaca-safety-monitor"
   },
   "dependencies": {
     "@mdi/js": "^7.4.47",

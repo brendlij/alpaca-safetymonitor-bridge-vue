@@ -169,5 +169,5 @@ secrets.yaml
 ecosystem.config.js
 
 # Application specific
-# Uncomment the following line if config.yaml contains sensitive MQTT credentials
-# config.yaml
+# User configuration directory contains sensitive MQTT credentials and device settings
+server/data/

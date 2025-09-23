@@ -2,8 +2,8 @@ server:
   httpPort: 11111
   discoveryPort: 32227
 mqtt:
-  enabled: true
-  autoConnect: true
+  enabled: false
+  autoConnect: false
   host: 192.168.178.185
   port: 1883
   username: mqtt

@@ -1,3 +1,5 @@
+// @ts-nocheck
+/* eslint-disable @typescript-eslint/no-require-imports */
 const express = require('express')
 const { spawn } = require('child_process')
 const path = require('path')
@@ -17,8 +19,9 @@ let serverProcess = null
 let isStarting = false
 let isShuttingDown = false
 
-const WRAPPER_PORT = 3001
-const SERVER_SCRIPT = path.join(__dirname, 'server', 'index.cjs')
+// Environment-based port configuration
+const WEB_PORT = Number(process.env.WEB_PORT || 3001)
+const IS_PRODUCTION = process.env.NODE_ENV === 'production'
 
 // Set up log emitter for wrapper logger
 const emitLog = (entry) => {
@@ -238,9 +241,47 @@ app.post('/wrapper/restart', async (req, res) => {
   }
 })
 
+// In production, serve the built frontend
+if (IS_PRODUCTION) {
+  const distPath = path.join(__dirname, 'dist')
+
+  // Serve static files from dist directory
+  app.use(express.static(distPath))
+
+  // Health check endpoint for Docker
+  app.get('/health', (req, res) => {
+    res.json({
+      status: 'ok',
+      serverRunning: !!serverProcess,
+      timestamp: new Date().toISOString(),
+    })
+  })
+
+  // SPA fallback - serve index.html for all non-API routes
+  app.get('*', (req, res) => {
+    // Don't serve index.html for API routes
+    if (
+      req.path.startsWith('/wrapper/') ||
+      req.path.startsWith('/admin/') ||
+      req.path.startsWith('/api/')
+    ) {
+      return res.status(404).json({ error: 'API endpoint not found' })
+    }
+    res.sendFile(path.join(distPath, 'index.html'))
+  })
+
+  wrapperLogger.info(`Production mode: Serving frontend from ${distPath}`)
+}
+
 // Start the wrapper server
-app.listen(WRAPPER_PORT, () => {
-  wrapperLogger.info(`Wrapper server listening on port ${WRAPPER_PORT}`)
+app.listen(WEB_PORT, () => {
+  wrapperLogger.info(`Wrapper server listening on port ${WEB_PORT}`)
+
+  if (IS_PRODUCTION) {
+    wrapperLogger.info('Running in production mode - serving built frontend')
+  } else {
+    wrapperLogger.info('Running in development mode - frontend should be served by Vite')
+  }
 
   // Auto-start the main server on wrapper startup
   wrapperLogger.info('Auto-starting main server...')

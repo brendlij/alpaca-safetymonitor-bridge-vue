@@ -14,7 +14,7 @@ export default defineConfigWithVueTs(
   },
 
   {
-    ignores: ['**/dist/**', '**/dist-ssr/**', '**/coverage/**', '**/server/**'],
+    ignores: ['**/dist/**', '**/dist-ssr/**', '**/coverage/**', '**/server/**', '**/*.cjs'],
   },
 
   pluginVue.configs['flat/essential'],

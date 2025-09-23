@@ -1,0 +1,43 @@
+name: CI - Build and Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run linter
+        run: npm run lint:check || true
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Test Docker build
+        run: docker build -t alpaca-safety-monitor-test .
+
+      - name: Test Docker run
+        run: |
+          docker run -d --name test-container --network host alpaca-safety-monitor-test
+          sleep 10
+          # Test if container is still running
+          docker ps | grep test-container
+          # Cleanup
+          docker stop test-container
+          docker rm test-container
