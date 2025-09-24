@@ -18,7 +18,8 @@
     "server": "node server/index.cjs",
     "wrapper": "node wrapper-server.cjs",
     "dev:all": "run-p wrapper dev",
-    "start": "NODE_ENV=production node wrapper-server.cjs"
+    "start": "NODE_ENV=production node wrapper-server.cjs",
+    "start:prod": "run-s build wrapper"
   },
   "dependencies": {
     "@mdi/js": "^7.4.47",
