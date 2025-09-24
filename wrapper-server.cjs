@@ -241,6 +241,84 @@ app.post('/wrapper/restart', async (req, res) => {
   }
 })
 
+// Add server management API routes that the frontend expects
+app.get('/api/server/status', (req, res) => {
+  res.json({
+    serverRunning: !!serverProcess,
+    isStarting,
+    isShuttingDown,
+    wrapperUptime: process.uptime(),
+    status: serverProcess ? 'running' : 'stopped'
+  })
+})
+
+app.post('/api/server/start', async (req, res) => {
+  try {
+    const result = await startServerProcess()
+    res.json({
+      success: true,
+      started: result,
+      message: result ? 'Server started successfully' : 'Server was already running',
+    })
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    })
+  }
+})
+
+app.post('/api/server/stop', async (req, res) => {
+  try {
+    const result = await stopServerProcess()
+    res.json({
+      success: true,
+      stopped: result,
+      message: result ? 'Server stopped successfully' : 'Server was not running',
+    })
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    })
+  }
+})
+
+app.post('/api/server/restart', async (req, res) => {
+  try {
+    wrapperLogger.info('Server restart requested by user')
+    wrapperLogger.info('Beginning server restart sequence...')
+
+    const stopResult = await stopServerProcess()
+    if (stopResult) {
+      wrapperLogger.info('Server successfully stopped for restart')
+    } else {
+      wrapperLogger.warn('Server was not running, proceeding with start')
+    }
+
+    wrapperLogger.debug('Waiting 1 second before starting server...')
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+
+    const startResult = await startServerProcess()
+    if (startResult) {
+      wrapperLogger.info('Server restart completed successfully')
+    } else {
+      wrapperLogger.warn('Server restart completed but server was already running')
+    }
+
+    res.json({
+      success: true,
+      message: 'Server restarted successfully',
+    })
+  } catch (error) {
+    wrapperLogger.error(`Server restart failed: ${error.message}`)
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    })
+  }
+})
+
 // Add proxy middleware for main server endpoints (before production static serving)
 if (IS_PRODUCTION) {
   const { createProxyMiddleware } = require('http-proxy-middleware')
