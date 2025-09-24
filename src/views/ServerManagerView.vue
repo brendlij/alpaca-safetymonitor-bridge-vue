@@ -520,7 +520,7 @@ function subscribeWrapperLogs() {
 }
 
 // Live status updates
-let statusInterval: number | null = null
+let statusInterval: NodeJS.Timeout | number | null = null
 
 function startStatusPolling() {
   // Poll status every 2 seconds for live updates

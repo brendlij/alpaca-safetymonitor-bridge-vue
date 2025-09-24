@@ -246,26 +246,35 @@ if (IS_PRODUCTION) {
   const { createProxyMiddleware } = require('http-proxy-middleware')
 
   // Proxy API requests to the main server, but exclude /api/server routes
-  app.use('/admin', createProxyMiddleware({
-    target: 'http://localhost:11111',
-    changeOrigin: true,
-    ws: true,
-    logLevel: 'silent'
-  }))
+  app.use(
+    '/admin',
+    createProxyMiddleware({
+      target: 'http://127.0.0.1:11111',
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'silent',
+    }),
+  )
 
-  app.use('/api', createProxyMiddleware({
-    target: 'http://localhost:11111',
-    changeOrigin: true,
-    ws: true,
-    logLevel: 'silent'
-  }))
+  app.use(
+    '/api',
+    createProxyMiddleware({
+      target: 'http://127.0.0.1:11111',
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'silent',
+    }),
+  )
 
-  app.use('/management', createProxyMiddleware({
-    target: 'http://localhost:11111',
-    changeOrigin: true,
-    ws: true,
-    logLevel: 'silent'
-  }))
+  app.use(
+    '/management',
+    createProxyMiddleware({
+      target: 'http://127.0.0.1:11111',
+      changeOrigin: true,
+      ws: true,
+      logLevel: 'silent',
+    }),
+  )
 
   const distPath = path.join(__dirname, 'dist')
 
