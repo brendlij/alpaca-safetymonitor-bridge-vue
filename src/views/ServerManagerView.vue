@@ -449,7 +449,7 @@ async function loadRecentLogs() {
 
   // Also load wrapper logs
   try {
-    const wrapperRes = await fetch('http://localhost:3001/wrapper/logs?n=200')
+    const wrapperRes = await fetch('/wrapper/logs?n=200')
     if (wrapperRes.ok) {
       const wrapperLogs = await wrapperRes.json()
       // Merge wrapper logs with server logs and sort by timestamp
@@ -500,7 +500,7 @@ function subscribeWrapperLogs() {
   // Don't create if already exists
   if (wrapperEs) return
 
-  wrapperEs = new EventSource('http://localhost:3001/wrapper/logs/stream')
+  wrapperEs = new EventSource('/wrapper/logs/stream')
   wrapperEs.addEventListener('log', async (ev) => {
     try {
       const entry = JSON.parse((ev as MessageEvent).data) as LogEntry
