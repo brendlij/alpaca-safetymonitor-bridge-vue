@@ -241,8 +241,32 @@ app.post('/wrapper/restart', async (req, res) => {
   }
 })
 
-// In production, serve the built frontend
+// Add proxy middleware for main server endpoints (before production static serving)
 if (IS_PRODUCTION) {
+  const { createProxyMiddleware } = require('http-proxy-middleware')
+
+  // Proxy API requests to the main server
+  app.use('/admin', createProxyMiddleware({
+    target: 'http://localhost:11111',
+    changeOrigin: true,
+    ws: true,
+    logLevel: 'silent'
+  }))
+
+  app.use('/api', createProxyMiddleware({
+    target: 'http://localhost:11111',
+    changeOrigin: true,
+    ws: true,
+    logLevel: 'silent'
+  }))
+
+  app.use('/management', createProxyMiddleware({
+    target: 'http://localhost:11111',
+    changeOrigin: true,
+    ws: true,
+    logLevel: 'silent'
+  }))
+
   const distPath = path.join(__dirname, 'dist')
 
   // Serve static files from dist directory
