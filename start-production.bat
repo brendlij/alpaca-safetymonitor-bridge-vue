@@ -1,27 +1,44 @@
 @echo off
-REM Production start script for Alpaca Safety Monitor Bridge (Windows)
-REM This script builds the frontend and starts the production server
+setlocal ENABLEEXTENSIONS
+
+REM UTF-8 in der Konsole
+chcp 65001 >NUL
 
 echo 🚀 Starting Alpaca Safety Monitor Bridge in production mode...
 
-REM Set production environment
+REM Production-Env setzen
 set NODE_ENV=production
 
-REM Use environment variables or defaults
+REM Standardport setzen falls leer
 if not defined WEB_PORT set WEB_PORT=3000
 
 echo 📦 Building frontend...
-call npm run build
 
-if %ERRORLEVEL% neq 0 (
-    echo ❌ Frontend build failed!
-    exit /b 1
+REM Prüfen ob run-p verfügbar ist
+where run-p >NUL 2>&1
+if %ERRORLEVEL%==0 (
+    echo ▶ Using run-p for parallel build
+    call npm run build
+) else (
+    echo ⚠ run-p not found, falling back to sequential build...
+    call npm run type-check
+    if errorlevel 1 (
+        echo ❌ Type-check failed!
+        exit /b 1
+    )
+    call npm run build-only
+    if errorlevel 1 (
+        echo ❌ Frontend build failed!
+        exit /b 1
+    )
 )
 
 echo ✅ Frontend build completed
-echo 🌐 Web interface will be available on port %WEB_PORT%
-echo 🔧 Alpaca API will be available on port 11111 (ASCOM standard)
-echo 📡 Discovery service will be available on port 32227 UDP (ASCOM standard)
+echo 🌐 Web interface: http://localhost:%WEB_PORT%
+echo 🔧 Alpaca API:    11111 (TCP)
+echo 📡 Discovery:     32227 (UDP)
 
 echo 🔥 Starting production server...
 node wrapper-server.cjs
+
+endlocal

@@ -2,12 +2,12 @@ server:
   httpPort: 11111
   discoveryPort: 32227
 mqtt:
-  enabled: true
-  autoConnect: true
+  enabled: false
+  autoConnect: false
   host: localhost
   port: 1883
-  username: 
-  password: 
+  username: null
+  password: null
   baseTopic: alpaca/safetymonitor
   clientId: alpaca-safety-monitor
 logging:
