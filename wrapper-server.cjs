@@ -323,7 +323,7 @@ app.post('/api/server/restart', async (req, res) => {
 if (IS_PRODUCTION) {
   const { createProxyMiddleware } = require('http-proxy-middleware')
 
-  // Proxy API requests to the main server
+  // Proxy API requests to the main server, but exclude /api/server routes
   app.use('/admin', createProxyMiddleware({
     target: 'http://localhost:11111',
     changeOrigin: true,
@@ -335,7 +335,9 @@ if (IS_PRODUCTION) {
     target: 'http://localhost:11111',
     changeOrigin: true,
     ws: true,
-    logLevel: 'silent'
+    logLevel: 'silent',
+    // Skip proxy for server management routes
+    skip: (req) => req.path.startsWith('/api/server')
   }))
 
   app.use('/management', createProxyMiddleware({
